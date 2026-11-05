@@ -1,0 +1,1 @@
+not a go mod

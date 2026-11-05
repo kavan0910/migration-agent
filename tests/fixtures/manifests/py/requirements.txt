@@ -1,0 +1,4 @@
+# comment
+flask==2.3.0
+requests>=2.0,<3  # inline
+-r other.txt

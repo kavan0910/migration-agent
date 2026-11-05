@@ -1,0 +1,10 @@
+services:
+  web:
+    image: nginx
+    environment:
+      - SECRET_KEY=abc
+      - MODE=prod
+  db:
+    environment:
+      POSTGRES_PASSWORD: pgpass
+      POSTGRES_DB: app

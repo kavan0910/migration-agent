@@ -1,0 +1,4 @@
+title = "x"
+[database]
+host = "localhost"
+password = "tomlpw"

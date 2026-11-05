@@ -1,0 +1,187 @@
+{
+  "repo": "spring-lite",
+  "components": [
+    {
+      "type": "component",
+      "name": "LibraryApplication",
+      "module": "src/main/java/com/acme/library/LibraryApplication.java",
+      "qualified_symbol": "com.acme.library.LibraryApplication"
+    },
+    {
+      "type": "component",
+      "name": "BookController",
+      "module": "src/main/java/com/acme/library/BookController.java",
+      "qualified_symbol": "com.acme.library.BookController"
+    },
+    {
+      "type": "component",
+      "name": "LoanController",
+      "module": "src/main/java/com/acme/library/LoanController.java",
+      "qualified_symbol": "com.acme.library.LoanController"
+    },
+    {
+      "type": "component",
+      "name": "LoanService",
+      "module": "src/main/java/com/acme/library/LoanService.java",
+      "qualified_symbol": "com.acme.library.LoanService"
+    },
+    {
+      "type": "component",
+      "name": "BookRepository",
+      "module": "src/main/java/com/acme/library/BookRepository.java",
+      "qualified_symbol": "com.acme.library.BookRepository"
+    },
+    {
+      "type": "component",
+      "name": "LoanRepository",
+      "module": "src/main/java/com/acme/library/LoanRepository.java",
+      "qualified_symbol": "com.acme.library.LoanRepository"
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "endpoint",
+      "name": "GET /api/books",
+      "module": "src/main/java/com/acme/library/BookController.java",
+      "qualified_symbol": "GET /api/books"
+    },
+    {
+      "type": "endpoint",
+      "name": "POST /api/books",
+      "module": "src/main/java/com/acme/library/BookController.java",
+      "qualified_symbol": "POST /api/books"
+    },
+    {
+      "type": "endpoint",
+      "name": "POST /api/loans/checkout/{bookId}",
+      "module": "src/main/java/com/acme/library/LoanController.java",
+      "qualified_symbol": "POST /api/loans/checkout/{bookId}"
+    }
+  ],
+  "entities": [
+    {
+      "type": "entity",
+      "name": "Book",
+      "module": "src/main/java/com/acme/library/Book.java",
+      "qualified_symbol": "com.acme.library.Book"
+    },
+    {
+      "type": "entity",
+      "name": "Member",
+      "module": "src/main/java/com/acme/library/Member.java",
+      "qualified_symbol": "com.acme.library.Member"
+    },
+    {
+      "type": "entity",
+      "name": "Loan",
+      "module": "src/main/java/com/acme/library/Loan.java",
+      "qualified_symbol": "com.acme.library.Loan"
+    }
+  ],
+  "edges": [
+    {
+      "type": "calls",
+      "source": "component|src/main/java/com/acme/library/BookController.java|com.acme.library.BookController",
+      "target": "component|src/main/java/com/acme/library/BookRepository.java|com.acme.library.BookRepository"
+    },
+    {
+      "type": "calls",
+      "source": "component|src/main/java/com/acme/library/LoanController.java|com.acme.library.LoanController",
+      "target": "component|src/main/java/com/acme/library/LoanService.java|com.acme.library.LoanService"
+    },
+    {
+      "type": "calls",
+      "source": "component|src/main/java/com/acme/library/LoanService.java|com.acme.library.LoanService",
+      "target": "component|src/main/java/com/acme/library/BookRepository.java|com.acme.library.BookRepository"
+    },
+    {
+      "type": "calls",
+      "source": "component|src/main/java/com/acme/library/LoanService.java|com.acme.library.LoanService",
+      "target": "component|src/main/java/com/acme/library/LoanRepository.java|com.acme.library.LoanRepository"
+    },
+    {
+      "type": "persists",
+      "source": "component|src/main/java/com/acme/library/BookRepository.java|com.acme.library.BookRepository",
+      "target": "entity|src/main/java/com/acme/library/Book.java|com.acme.library.Book"
+    },
+    {
+      "type": "persists",
+      "source": "component|src/main/java/com/acme/library/LoanRepository.java|com.acme.library.LoanRepository",
+      "target": "entity|src/main/java/com/acme/library/Loan.java|com.acme.library.Loan"
+    },
+    {
+      "type": "relates_to",
+      "source": "entity|src/main/java/com/acme/library/Loan.java|com.acme.library.Loan",
+      "target": "entity|src/main/java/com/acme/library/Book.java|com.acme.library.Book"
+    },
+    {
+      "type": "relates_to",
+      "source": "entity|src/main/java/com/acme/library/Loan.java|com.acme.library.Loan",
+      "target": "entity|src/main/java/com/acme/library/Member.java|com.acme.library.Member"
+    },
+    {
+      "type": "handled_by",
+      "source": "endpoint|src/main/java/com/acme/library/LoanController.java|POST /api/loans/checkout/{bookId}",
+      "target": "component|src/main/java/com/acme/library/LoanController.java|com.acme.library.LoanController"
+    }
+  ],
+  "rules": [
+    {
+      "type": "rule",
+      "name": "RULE-SUSPENDED",
+      "module": "src/main/java/com/acme/library/LoanService.java",
+      "qualified_symbol": "com.acme.library.LoanService.checkout#RULE-SUSPENDED",
+      "text": "Suspended members cannot borrow books",
+      "evidence": [
+        {
+          "file": "src/main/java/com/acme/library/LoanService.java",
+          "start_line": 21,
+          "end_line": 22
+        }
+      ]
+    },
+    {
+      "type": "rule",
+      "name": "RULE-LOAN-LIMIT",
+      "module": "src/main/java/com/acme/library/LoanService.java",
+      "qualified_symbol": "com.acme.library.LoanService.checkout#RULE-LOAN-LIMIT",
+      "text": "A member cannot hold more than the configured number of open loans",
+      "evidence": [
+        {
+          "file": "src/main/java/com/acme/library/LoanService.java",
+          "start_line": 24,
+          "end_line": 25
+        }
+      ]
+    },
+    {
+      "type": "rule",
+      "name": "RULE-NO-COPIES",
+      "module": "src/main/java/com/acme/library/LoanService.java",
+      "qualified_symbol": "com.acme.library.LoanService.checkout#RULE-NO-COPIES",
+      "text": "A book with no available copies cannot be borrowed",
+      "evidence": [
+        {
+          "file": "src/main/java/com/acme/library/LoanService.java",
+          "start_line": 28,
+          "end_line": 29
+        }
+      ]
+    },
+    {
+      "type": "rule",
+      "name": "RULE-LOAN-PERIOD",
+      "module": "src/main/java/com/acme/library/LoanService.java",
+      "qualified_symbol": "com.acme.library.LoanService.checkout#RULE-LOAN-PERIOD",
+      "text": "Loans fall due 14 days after checkout",
+      "evidence": [
+        {
+          "file": "src/main/java/com/acme/library/LoanService.java",
+          "start_line": 33,
+          "end_line": 33
+        }
+      ]
+    }
+  ],
+  "must_not_appear": []
+}

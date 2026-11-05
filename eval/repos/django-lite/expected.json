@@ -1,0 +1,153 @@
+{
+  "repo": "django-lite",
+  "components": [
+    {
+      "type": "component",
+      "name": "services",
+      "module": "library/services.py",
+      "qualified_symbol": "library.services"
+    },
+    {
+      "type": "component",
+      "name": "views",
+      "module": "library/views.py",
+      "qualified_symbol": "library.views"
+    },
+    {
+      "type": "component",
+      "name": "urls",
+      "module": "library/urls.py",
+      "qualified_symbol": "library.urls"
+    },
+    {
+      "type": "component",
+      "name": "settings",
+      "module": "library/settings.py",
+      "qualified_symbol": "library.settings"
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "endpoint",
+      "name": "ANY workshops/",
+      "module": "library/urls.py",
+      "qualified_symbol": "ANY workshops/"
+    },
+    {
+      "type": "endpoint",
+      "name": "ANY workshops/<int:workshop_id>/register/",
+      "module": "library/urls.py",
+      "qualified_symbol": "ANY workshops/<int:workshop_id>/register/"
+    }
+  ],
+  "entities": [
+    {
+      "type": "entity",
+      "name": "Workshop",
+      "module": "library/models.py",
+      "qualified_symbol": "library.models.Workshop"
+    },
+    {
+      "type": "entity",
+      "name": "Registration",
+      "module": "library/models.py",
+      "qualified_symbol": "library.models.Registration"
+    }
+  ],
+  "edges": [
+    {
+      "type": "calls",
+      "source": "component|library/views.py|library.views",
+      "target": "component|library/services.py|library.services"
+    },
+    {
+      "type": "calls",
+      "source": "component|library/urls.py|library.urls",
+      "target": "component|library/views.py|library.views"
+    },
+    {
+      "type": "calls",
+      "source": "component|library/services.py|library.services",
+      "target": "component|library/settings.py|library.settings"
+    },
+    {
+      "type": "persists",
+      "source": "component|library/services.py|library.services",
+      "target": "entity|library/models.py|library.models.Registration"
+    },
+    {
+      "type": "persists",
+      "source": "component|library/views.py|library.views",
+      "target": "entity|library/models.py|library.models.Workshop"
+    },
+    {
+      "type": "relates_to",
+      "source": "entity|library/models.py|library.models.Registration",
+      "target": "entity|library/models.py|library.models.Workshop"
+    },
+    {
+      "type": "handled_by",
+      "source": "endpoint|library/urls.py|ANY workshops/",
+      "target": "component|library/views.py|library.views"
+    }
+  ],
+  "rules": [
+    {
+      "type": "rule",
+      "name": "RULE-NO-DUPLICATE",
+      "module": "library/services.py",
+      "qualified_symbol": "library.services.register#RULE-NO-DUPLICATE",
+      "text": "A person cannot register twice for the same workshop",
+      "evidence": [
+        {
+          "file": "library/services.py",
+          "start_line": 7,
+          "end_line": 8
+        }
+      ]
+    },
+    {
+      "type": "rule",
+      "name": "RULE-SEAT-CAP",
+      "module": "library/services.py",
+      "qualified_symbol": "library.services.register#RULE-SEAT-CAP",
+      "text": "A workshop cannot be configured with more seats than the global cap",
+      "evidence": [
+        {
+          "file": "library/services.py",
+          "start_line": 9,
+          "end_line": 10
+        }
+      ]
+    },
+    {
+      "type": "rule",
+      "name": "RULE-WAITLIST",
+      "module": "library/services.py",
+      "qualified_symbol": "library.services.register#RULE-WAITLIST",
+      "text": "Registrations beyond capacity are waitlisted",
+      "evidence": [
+        {
+          "file": "library/services.py",
+          "start_line": 11,
+          "end_line": 11
+        }
+      ]
+    },
+    {
+      "type": "rule",
+      "name": "RULE-PROMOTE",
+      "module": "library/services.py",
+      "qualified_symbol": "library.services.cancel#RULE-PROMOTE",
+      "text": "Cancelling a confirmed registration promotes the first waitlisted one",
+      "evidence": [
+        {
+          "file": "library/services.py",
+          "start_line": 18,
+          "end_line": 22
+        }
+      ]
+    }
+  ],
+  "must_not_appear": []
+}

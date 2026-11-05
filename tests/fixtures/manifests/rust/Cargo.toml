@@ -1,0 +1,10 @@
+[package]
+name = "crate1"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.70"
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = "1"
+[dev-dependencies]
+tempfile = "3"

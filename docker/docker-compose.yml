@@ -1,0 +1,59 @@
+# Build context is the repo root:  docker compose -f docker/docker-compose.yml ...
+#
+# Profiles:
+#   offline (default use) : worker with network_mode none. No egress at all.
+#   model                 : worker on an *internal* network (no route to the internet)
+#                           + allowlisting proxy that is the only path to the model endpoint.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  user: "10001:10001"
+  pids_limit: 256
+  mem_limit: 2g
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+    - /scratch:rw,noexec,nosuid,size=256m,uid=10001,gid=10001
+
+services:
+  worker-offline:
+    profiles: ["offline"]
+    build: { context: .., dockerfile: docker/Dockerfile }
+    <<: *hardening
+    network_mode: none
+    volumes:
+      - ${REPO_DIR:?set REPO_DIR}:/workspace:ro     # code mounted read-only
+
+  worker:
+    profiles: ["model"]
+    build: { context: .., dockerfile: docker/Dockerfile }
+    <<: *hardening
+    networks: [sandbox_internal]       # internal: true => no default route out
+    environment:
+      HTTPS_PROXY: http://egress-proxy:3128
+      HTTP_PROXY: http://egress-proxy:3128
+      NO_PROXY: ""
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # injected at runtime, never baked
+    volumes:
+      - ${REPO_DIR:?set REPO_DIR}:/workspace:ro
+    depends_on: [egress-proxy]
+
+  # Allowlisting forward proxy: CONNECT only to MODEL_ENDPOINT_HOST:443, everything else denied.
+  egress-proxy:
+    profiles: ["model"]
+    image: ubuntu/squid:6.6-24.04_beta
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]          # squid drops privileges at start
+    security_opt: ["no-new-privileges:false"]
+    tmpfs: [/var/run, /var/log/squid, /var/spool/squid]
+    environment:
+      MODEL_ENDPOINT_HOST: ${MODEL_ENDPOINT_HOST:-api.anthropic.com}
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks: [sandbox_internal, egress]   # the only service attached to a routable network
+
+networks:
+  sandbox_internal:
+    internal: true
+  egress: {}
