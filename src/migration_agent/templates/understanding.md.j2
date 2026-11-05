@@ -1,0 +1,158 @@
+{% macro ev(e) -%}
+`{{ e.file }}{% if e.line_start %}:{{ e.line_start }}{% if e.line_end and e.line_end != e.line_start %}-{{ e.line_end }}{% endif %}{% endif %}`{% if e.symbol %} ({{ e.symbol }}){% endif %}
+{%- endmacro %}
+{% macro evs(n) -%}
+{% if n.evidence %}{% for e in n.evidence %}{{ ev(e) }}{{ ", " if not loop.last }}{% endfor %}{% else %}no evidence{% endif %}
+{%- endmacro %}
+{% macro item(n) %}
+- <a id="{{ n.id }}"></a>**{{ n.id }}** {{ n.name }}{% if n.quirk %} · **preserved quirk**{% endif %}{% if n.suspected_bug %} · **suspected bug**{% endif %}
+
+  - Responsibility: {{ n.responsibility or "(not described)" }}
+  - Evidence: {{ evs(n) }}
+  - Confidence: {{ n.confidence }}
+{% if n.module %}
+  - Module: `{{ n.module }}`
+{% endif %}
+{% if links.get(n.id) %}
+  - Relations: {{ links[n.id]|join("; ") }}
+{% endif %}
+
+{% endmacro %}
+{% macro edge(e) -%}
+- <a id="{{ e.id }}"></a>**{{ e.id }}** {{ e.source }} -{{ e.type }}-> {{ e.target }} · evidence: {% if e.evidence %}{% for x in e.evidence %}{{ ev(x) }}{{ ", " if not loop.last }}{% endfor %}{% else %}none{% endif %} · confidence {{ e.confidence }}
+{% endmacro %}
+{% macro section(num, title, intro, nodes, empty) -%}
+## {{ num }}. {{ title }}
+
+{{ intro }}
+
+{% if nodes %}{% for n in nodes %}{{ item(n) }}{% endfor %}{% else %}_{{ empty }}_
+{% endif %}
+{% endmacro %}
+# Understanding: {{ name }}
+
+{% if description %}{{ description }}
+
+{% endif %}_Rendered from graph v{{ graph.version }}{% if source %} · source `{{ source }}`{% endif %} · {{ graph.nodes|length }} nodes, {{ graph.edges|length }} edges._
+
+## Contents
+
+{% for num, title in toc %}{{ num }}. {{ title }}
+{% endfor %}
+
+## 1. Purpose & Capabilities
+
+{% if purpose %}{{ purpose }}{% else %}_No purpose statement recorded in project metadata._{% endif %}
+
+{% if counts %}Graph summary:
+{% for t, c in counts %}- {{ t }}: {{ c }}
+{% endfor %}{% else %}_The graph is empty: nothing has been analysed yet._
+{% endif %}
+
+## 2. Boundary & External Dependencies
+
+{{ "External systems and libraries the service depends on." }}
+
+{% if sec.deps %}{% for n in sec.deps %}{{ item(n) }}{% endfor %}{% else %}_No external dependencies recorded._
+{% endif %}
+{% if sec.dep_edges %}
+Dependency edges:
+
+{% for e in sec.dep_edges %}{{ edge(e) }}{% endfor %}{% endif %}
+
+## 3. Component Responsibilities
+
+Components grouped by module.
+
+{% if sec.components %}{% for mod, ns in sec.components %}### {{ mod }}
+
+{% for n in ns %}{{ item(n) }}{% endfor %}
+{% endfor %}{% else %}_No components recorded._
+{% endif %}
+{% if sec.dead %}### Dead code
+
+{% for n in sec.dead %}{{ item(n) }}{% endfor %}{% endif %}
+
+{{ section(4, "Endpoints & API Surface", "HTTP/RPC entry points.", sec.endpoints, "No endpoints recorded.") }}
+## 5. Data Model & Storage
+
+{% if sec.entities %}{% for n in sec.entities %}{{ item(n) }}{% endfor %}{% else %}_No data entities recorded._
+{% endif %}
+{% if sec.data_edges %}
+Reads / writes:
+
+{% for e in sec.data_edges %}{{ edge(e) }}{% endfor %}{% endif %}
+
+{{ section(6, "Business Rules", "Rules enforced by the code, each backed by evidence.", sec.rules, "No business rules recorded.") }}
+## 7. Integrations & Contracts
+
+{% if sec.integrations %}{% for n in sec.integrations %}{{ item(n) }}{% endfor %}{% else %}_No integrations recorded._
+{% endif %}
+{% if sec.int_edges %}
+Calls / contracts:
+
+{% for e in sec.int_edges %}{{ edge(e) }}{% endfor %}{% endif %}
+
+{{ section(8, "Background Jobs & Consumers", "Scheduled jobs and message consumers.", sec.jobs, "No background jobs or consumers recorded.") }}
+{{ section(9, "Configuration & Environment", "Configuration keys and environment settings.", sec.configs, "No configuration recorded.") }}
+{{ section(10, "Auth, Error Handling & Cross-Cutting", "Components whose name, module or responsibility mentions auth, errors, logging, validation or middleware.", sec.xcut, "No cross-cutting concerns identified.") }}
+{{ section(11, "Existing Tests", "Items whose evidence lives in test files.", sec.tests, "No tests found in the graph.") }}
+## 12. Quirks & Suspicious Code
+
+### Found bugs & suspicious behaviour
+
+{% if sec.bugs %}> Suspected bugs found while reading the code. Review before migrating.
+
+{% for n in sec.bugs %}{{ item(n) }}{% endfor %}{% else %}_No suspected bugs were found._
+{% endif %}
+### Preserved quirks
+
+{% if sec.quirks %}Behaviour that looks odd but must be preserved.
+
+{% for n in sec.quirks %}{{ item(n) }}{% endfor %}{% else %}_No preserved quirks recorded._
+{% endif %}
+
+## 13. Blind Spots / low confidence
+
+{% if sec.blind_nodes or sec.blind_edges or sec.fallback %}{% if sec.blind_nodes %}### Items with low or no confidence
+
+{% for n in sec.blind_nodes %}- [{{ n.id }}](#{{ n.id }}) {{ n.name }} · confidence {{ n.confidence }} · evidence: {{ evs(n) }}
+{% endfor %}
+{% endif %}{% if sec.blind_edges %}### Edges with low or no confidence
+
+{% for e in sec.blind_edges %}- [{{ e.id }}](#{{ e.id }}) {{ e.source }} -{{ e.type }}-> {{ e.target }} · confidence {{ e.confidence }}
+{% endfor %}
+{% endif %}{% if sec.fallback %}### Fallback-parsed files
+
+{% for f in sec.fallback %}- `{{ f }}`
+{% endfor %}{% endif %}{% else %}_No blind spots: every item has medium or high confidence and no files were fallback-parsed._
+{% endif %}
+
+## 14. Open Questions & Assumptions
+
+### Open questions
+
+{% if sec.questions %}{% for q in sec.questions %}- {{ q }}
+{% endfor %}{% else %}_No open questions recorded._
+{% endif %}
+### Assumptions
+
+{% if sec.assumptions %}{% for q in sec.assumptions %}- {{ q }}
+{% endfor %}{% else %}_No assumptions recorded._
+{% endif %}
+
+## 15. Coverage Matrix
+
+{% if inventory_counts %}Inventory:
+
+{% for k, v in inventory_counts|dictsort %}- {{ k }}: {{ v }}
+{% endfor %}
+{% else %}_No inventory counts provided._
+{% endif %}
+{% if cov %}Coverage:
+
+{% for k, v in cov %}- {{ k }}: {{ v }}
+{% endfor %}{% else %}_No coverage report provided._
+{% endif %}
+{% if changelog %}
+{{ changelog }}{% endif %}

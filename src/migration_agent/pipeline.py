@@ -97,7 +97,7 @@ def build_fact_graph(proj: Project) -> Graph:
         module = str(Path(it.file).parent) if it.file and t != "external_dependency" else (it.file or "")
         sym = it.name if t != "component" else it.file
         key = (t, module, f"{sym}@{it.line}" if t in ("endpoint", "config") else sym)
-        ev = [Evidence(file=it.file, line_start=it.line, line_end=it.line, symbol=it.name)] if it.file else []
+        ev = [Evidence(file=it.file, line_start=it.line, line_end=it.line)] if it.file else []
         if key in nodes:
             nodes[key].inventory_refs.append(it.id)
             continue

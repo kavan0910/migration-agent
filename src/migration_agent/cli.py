@@ -77,5 +77,33 @@ def audit(project: Path, fmt: str) -> None:
     click.echo(render_audit(_proj(project).audit_dir / "audit.jsonl", fmt=fmt))
 
 
+@main.command()
+@click.argument("project", type=click.Path(exists=True, path_type=Path))
+@click.option("--offline", is_flag=True, help="Run the pipeline with a deterministic no-model stand-in (no real analysis).")
+@click.option("--config", "config_path", type=click.Path(exists=True, path_type=Path), default=None, help="LLM config.json")
+@click.option("--max-usd", type=float, default=None, help="Hard budget; the run stops gracefully when reached.")
+@click.option("--dry-run", is_flag=True, help="Only print the chunk plan and cost estimate.")
+def analyze(project: Path, offline: bool, config_path: Path | None, max_usd: float | None, dry_run: bool) -> None:
+    """Analyze the service: extract -> LLM analysis -> merge -> verify -> render doc and graph."""
+    from .analyze.runner import estimate, run_analyze
+    from .audit import AuditLog
+    from .llm.litellm_client import Budget, LiteLLMClient, LLMConfig
+    from .llm.offline import OfflineLLM
+    from .pipeline import run_extract
+    p = _proj(project)
+    if not p.inventory_path.exists():
+        run_extract(p)
+    cfg = LLMConfig.load(config_path) if config_path else LLMConfig()
+    n, usd = estimate(p, cfg)
+    click.echo(f"plan: {n} chunk(s), estimated cost ${usd:.2f}" + (" (offline: no cost)" if offline else ""))
+    if dry_run:
+        return
+    audit_log = AuditLog(p.audit_dir / "audit.jsonl")
+    llm = OfflineLLM() if offline else LiteLLMClient(cfg, budget=Budget(max_usd=max_usd), cache_dir=p.root / "llm_cache", audit=audit_log)
+    out = run_analyze(p, llm, log=click.echo)
+    click.echo(f"done: {out}")
+    click.echo(f"doc:   {p.docs / 'understanding.latest.md'}\ngraph: {p.docs / 'graph.html'}")
+
+
 if __name__ == "__main__":
     main()

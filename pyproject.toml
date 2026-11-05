@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+llm = ["litellm>=1.40"]
 
 [project.scripts]
 migration-agent = "migration_agent.cli:main"

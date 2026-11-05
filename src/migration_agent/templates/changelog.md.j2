@@ -1,0 +1,9 @@
+## Changelog
+
+{% if empty %}_No changes since the previous version (v{{ old_version }} -> v{{ new_version }})._
+{% else %}Changes from graph v{{ old_version }} to v{{ new_version }}.
+{% for title, rows in groups %}{% if rows %}
+### {{ title }}
+
+{% for r in rows %}- {{ r }}
+{% endfor %}{% endif %}{% endfor %}{% endif %}
