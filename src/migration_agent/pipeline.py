@@ -94,7 +94,7 @@ def build_fact_graph(proj: Project) -> Graph:
     nodes: dict[tuple, Node] = {}
     for it in inv.items:
         t = spec[it.kind]
-        module = str(Path(it.file).parent) if it.file and t != "external_dependency" else (it.file or "")
+        module = it.file or ""
         sym = it.name if t != "component" else it.file
         key = (t, module, f"{sym}@{it.line}" if t in ("endpoint", "config") else sym)
         ev = [Evidence(file=it.file, line_start=it.line, line_end=it.line)] if it.file else []

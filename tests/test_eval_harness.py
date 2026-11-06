@@ -63,7 +63,7 @@ def test_partial_lists_missed():
     r = score(act, exp)
     assert r.categories["components"].recall < 1.0
     assert r.categories["components"].precision == 1.0
-    assert r.categories["components"].missed == [f"component|{dropped['module']}|{dropped['qualified_symbol']}"]
+    assert r.categories["components"].missed == [f"component|{dropped['module']}"]
     assert len(r.categories["edges"].missed) == 2
     assert r.categories["rules"].f1 == 1.0
 

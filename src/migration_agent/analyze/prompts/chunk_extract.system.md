@@ -19,6 +19,13 @@ EVIDENCE RULES:
 - Do not invent nodes, edges, files or line numbers. If you are unsure, omit the item or put the reference in "unresolved".
 - Some files may be marked as raw-reading fallback (no structural parse was available). Analyse them, but lower your claims: only report what is explicit in the text and prefer "unresolved" over guesses.
 
+NAMING CONVENTIONS (identity must be stable and consistent across chunks):
+- "module" is ALWAYS the repo-relative path of the file that defines the item (e.g. "src/services/orderService.js"), never a directory.
+- component: one per source file; qualified_symbol is the name of its main exported object/class/function (e.g. "orderService", "requireAuth", "app").
+- endpoint: qualified_symbol is "<METHOD> <full URL path>" including any router mount prefix visible in the code (e.g. "GET /api/orders/:id"); module is the file where the handler route is declared.
+- data_entity: one per model/table/schema, qualified_symbol is its name (e.g. "Order"), module is the defining file.
+- Edge source/target refs use these same module/qualified_symbol values. For "calls" between files, link the component nodes (e.g. router component -> service component).
+
 Allowed node types: component, endpoint, data_entity, external_dependency, business_rule, config, job, integration, dead_code.
 Allowed edge types: calls, reads, writes, depends_on, publishes, consumes, implements, configures.
 Nodes or edges with any other type will be discarded.

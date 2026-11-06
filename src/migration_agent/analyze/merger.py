@@ -134,3 +134,44 @@ class Checkpoint:
     def load_patches(self) -> list[ChunkPatch]:
         return [ChunkPatch.model_validate_json((self.chunks / f"{c}.json").read_text())
                 for c in sorted(self.completed_chunk_ids())]
+
+
+def dedupe_fact_endpoints(graph: Graph) -> Graph:
+    """Drop facts-only endpoint stubs ("GET /@7": router-relative path + line) when the model produced a
+    full-path endpoint for the same file+method on (near) the same line; the stub's inventory refs move
+    to the surviving node and edges are re-pointed."""
+    def split(n: Node):
+        method, _, path = n.qualified_symbol.partition(" ")
+        return method, path
+
+    stubs = [n for n in graph.nodes if n.type == "endpoint" and "@" in n.qualified_symbol]
+    full = [n for n in graph.nodes if n.type == "endpoint" and "@" not in n.qualified_symbol]
+    remap: dict[str, str] = {}
+    for st in stubs:
+        method, spath = split(st)
+        spath = spath.rsplit("@", 1)[0]
+        sline = next((e.line_start for e in st.evidence if e.line_start), None)
+        cands = [f for f in full if f.module == st.module and split(f)[0] == method
+                 and (split(f)[1].endswith(spath) if spath != "/" else True)]
+        near = [f for f in cands if sline is not None and any(
+            e.line_start is not None and abs(e.line_start - sline) <= 3 for e in f.evidence)]
+        pick = near[0] if len(near) == 1 else (cands[0] if len(cands) == 1 else None)
+        if pick is not None:
+            remap[st.id] = pick.id
+    if not remap:
+        return graph
+    by_id = {n.id: n for n in graph.nodes}
+    nodes = []
+    for n in graph.nodes:
+        if n.id in remap:
+            continue
+        extra = [r for old, new in remap.items() if new == n.id for r in by_id[old].inventory_refs]
+        nodes.append(n.model_copy(update={"inventory_refs": sorted(set(n.inventory_refs) | set(extra))}) if extra else n)
+    seen, edges = set(), []
+    for e in graph.edges:
+        e2 = e.model_copy(update={"source": remap.get(e.source, e.source), "target": remap.get(e.target, e.target)})
+        k = (e2.source, e2.type, e2.target)
+        if k not in seen and e2.source != e2.target:
+            seen.add(k)
+            edges.append(e2)
+    return Graph(version=graph.version, nodes=nodes, edges=edges)

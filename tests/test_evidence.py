@@ -32,7 +32,7 @@ def test_valid(code):
     (Evidence(file="nope.py"), "does not exist"),
     (Evidence(file="a.py", line_start=99), "outside file"),
     (Evidence(file="a.py", line_start=1, line_end=9), "outside file"),
-    (Evidence(file="a.py", line_start=1, line_end=2, symbol="Bar"), "symbol"),
+    (Evidence(file="a.py", line_start=1, line_end=2, symbol="NoSuchSymbol"), "symbol"),
     (Evidence(file="a.py", line_start=1, quote="class Bar"), "quote"),
     (Evidence(file="../secret.py", line_start=1, symbol="foo"), "escapes"),
     (Evidence(file="/etc/passwd"), "escapes"),

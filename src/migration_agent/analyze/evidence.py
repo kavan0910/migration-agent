@@ -55,8 +55,9 @@ def check_evidence(ev: Evidence, code_dir: Path) -> str | None:
     else:
         region = lines
     text = "\n".join(region)
-    if ev.symbol and ev.symbol not in text:
-        return f"symbol {ev.symbol!r} not found in cited lines"
+    # symbol is usually the enclosing function, so it need only appear somewhere in the file
+    if ev.symbol and ev.symbol not in "\n".join(lines):
+        return f"symbol {ev.symbol!r} not found in file"
     if ev.quote and _norm(ev.quote) not in _norm(text):
         return "quote not found in cited lines"
     return None

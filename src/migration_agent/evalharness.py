@@ -15,8 +15,23 @@ _NODE_TYPES = {"components": "component", "endpoints": "endpoint", "entities": "
 EVAL_REPOS = Path(__file__).resolve().parents[2] / "eval" / "repos"
 
 
+_EDGE_ALIASES = {"persists": "writes", "relates_to": "depends_on"}
+_FILE_LEVEL_OK = {"component", "config", "external_dependency"}
+_TYPE_ALIASES = {"data_entity": "entity", "business_rule": "rule"}
+
+
 def node_key(n: dict) -> str:
-    return f"{n.get('type')}|{n.get('module')}|{n.get('qualified_symbol')}"
+    t = n.get("type")
+    return f"{_TYPE_ALIASES.get(t, t)}|{n.get('module')}|{n.get('qualified_symbol')}"
+
+
+def load_actual(graph_dir: Path | str) -> dict:
+    """Load graph/latest.json, following its pointer to the snapshot; map to {nodes, edges}."""
+    graph_dir = Path(graph_dir)
+    data = json.loads((graph_dir / "latest.json").read_text())
+    if "nodes" not in data and "path" in data:
+        data = json.loads((graph_dir / data["path"]).read_text())
+    return data
 
 
 @dataclass
@@ -85,10 +100,16 @@ def check_evidence(items: list[tuple[str, dict]], repo_root: Path) -> tuple[floa
     for owner, ev in items:
         try:
             f = (repo_root / ev["file"]).resolve()
-            s, e = int(ev["start_line"]), int(ev.get("end_line", ev["start_line"]))
             if not f.is_relative_to(repo_root.resolve()) or not f.is_file():
                 errors.append(f"{owner}: missing file {ev['file']}")
                 continue
+            rng = _ev_range(ev)
+            if rng is None:
+                # file-level evidence is fine for structural facts (a file is a component), not for rules/endpoints
+                if owner.split("|", 1)[0] in _FILE_LEVEL_OK:
+                    continue
+                raise ValueError("missing line range")
+            s, e = rng
             n = len(f.read_text(errors="replace").splitlines())
             if not (1 <= s <= e <= n):
                 errors.append(f"{owner}: {ev['file']}:{s}-{e} outside 1..{n}")
@@ -109,22 +130,64 @@ def _strings(obj: Any):
             yield from _strings(v)
 
 
+def _ev_range(ev: dict) -> tuple[int, int] | None:
+    s = ev.get("start_line", ev.get("line_start"))
+    if s is None:
+        return None
+    return int(s), int(ev.get("end_line", ev.get("line_end")) or s)
+
+
+def _overlap(a: dict, b: dict) -> bool:
+    for x in a.get("evidence") or []:
+        for y in b.get("evidence") or []:
+            if x.get("file") == y.get("file") and (rx := _ev_range(x)) and (ry := _ev_range(y)) \
+                    and rx[0] <= ry[1] and ry[0] <= rx[1]:
+                return True
+    return False
+
+
+def _canon(n: dict, expected_rules: list[dict]) -> str:
+    """Scoring identity: components/entities by defining file, endpoints by file+'METHOD path',
+    rules by file+evidence overlap with an expected rule (rule naming is free-form for a model)."""
+    t = _TYPE_ALIASES.get(n.get("type"), n.get("type"))
+    mod = n.get("module")
+    if t in ("component", "entity"):
+        return f"{t}|{mod}"
+    if t == "rule":
+        for r in expected_rules:
+            if r.get("module") == mod and _overlap(n, r):
+                return node_key(r)
+    return f"{t}|{mod}|{n.get('qualified_symbol')}"
+
+
 def score(actual: dict, expected: dict, repo_root: Path | str | None = None) -> Report:
     root = Path(repo_root) if repo_root else EVAL_REPOS / expected["repo"]
     nodes = actual.get("nodes", [])
-    id_to_key = {n["id"]: node_key(n) for n in nodes if "id" in n}
+    exp_rules = expected.get("rules", [])
+    id_to_key = {n["id"]: _canon(n, exp_rules) for n in nodes if "id" in n}
+
+    def key_of_str(k: str) -> str:
+        if k.count("|") < 2:
+            return k
+        t, _, rest = k.partition("|")
+        mod, _, sym = rest.partition("|")
+        return _canon({"type": t, "module": mod, "qualified_symbol": sym}, exp_rules)
+
     cats: dict[str, CategoryScore] = {}
     for cat, t in _NODE_TYPES.items():
-        exp = {node_key(n) for n in expected.get(cat, [])}
-        act = {node_key(n) for n in nodes if n.get("type") == t}
+        exp = {_canon(n, exp_rules) for n in expected.get(cat, [])}
+        act = {_canon(n, exp_rules) for n in nodes if _TYPE_ALIASES.get(n.get("type"), n.get("type")) == t}
         cats[cat] = _prf(exp, act)
 
     def ekey(e: dict) -> str:
         s, tg = e.get("source"), e.get("target")
-        return f"{e.get('type')}|{id_to_key.get(s, s)}|{id_to_key.get(tg, tg)}"
+        return f"{_EDGE_ALIASES.get(e.get('type'), e.get('type'))}|{id_to_key.get(s) or key_of_str(s)}|{id_to_key.get(tg) or key_of_str(tg)}"
+
+    def structural(e: dict) -> bool:
+        return not any((id_to_key.get(x) or x).startswith("rule|") for x in (e.get("source"), e.get("target")))
 
     cats["edges"] = _prf({ekey(e) for e in expected.get("edges", [])},
-                         {ekey(e) for e in actual.get("edges", [])})
+                         {ekey(e) for e in actual.get("edges", []) if structural(e)})
 
     validity, errors = check_evidence(_evidence_items(nodes), root)
 
