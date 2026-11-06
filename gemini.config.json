@@ -1,0 +1,6 @@
+{"llm": {
+ "models": {"chunk_extract": "gemini/gemini-3.5-flash", "cross_ref": "gemini/gemini-3.5-flash", "business_rules": "gemini/gemini-3.5-flash", "gap_fill": "gemini/gemini-3.5-flash", "verifier": "gemini/gemini-3.5-flash"},
+ "default_model": "gemini/gemini-3.5-flash",
+ "pricing": {"gemini-3.5-flash": [0.3, 2.5]},
+ "default_pricing": [0.3, 2.5],
+ "max_output_tokens": 8192}}

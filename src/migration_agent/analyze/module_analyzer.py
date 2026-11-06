@@ -35,13 +35,25 @@ def _ref_ok(ref, node_types=NODE_TYPES) -> bool:
     return isinstance(ref, dict) and ref.get("type") in node_types
 
 
+def _fill_ref(ref):
+    """Tolerate refs that omit qualified_symbol: fall back to name/path/file."""
+    if isinstance(ref, dict) and not ref.get("qualified_symbol"):
+        alt = ref.get("name") or ref.get("path") or ref.get("file") or ref.get("symbol") or ref.get("module")
+        if alt:
+            return {**ref, "qualified_symbol": str(alt)}
+    return ref
+
+
 def sanitize_patch(data, chunk_id: str, node_types=NODE_TYPES) -> dict:
     """Drop nodes/edges/unresolved with invalid types; force chunk_id."""
     if not isinstance(data, dict):
         raise ValueError("top-level JSON must be an object")
     out = dict(data)
     out["chunk_id"] = chunk_id
-    out["nodes"] = [n for n in (data.get("nodes") or []) if isinstance(n, dict) and n.get("type") in node_types]
+    out["nodes"] = [_fill_ref(n) for n in (data.get("nodes") or []) if isinstance(n, dict) and n.get("type") in node_types]
+    fix_e = lambda e: {**e, "source": _fill_ref(e.get("source")), "target": _fill_ref(e.get("target"))} if isinstance(e, dict) else e
+    fix_u = lambda u: {**u, "from_node": _fill_ref(u.get("from_node"))} if isinstance(u, dict) else u
+    data = {**data, "edges": [fix_e(e) for e in (data.get("edges") or [])], "unresolved": [fix_u(u) for u in (data.get("unresolved") or [])]}
     out["edges"] = [e for e in (data.get("edges") or [])
                     if isinstance(e, dict) and e.get("type") in EDGE_TYPES
                     and _ref_ok(e.get("source")) and _ref_ok(e.get("target"))]

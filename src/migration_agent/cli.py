@@ -10,6 +10,8 @@ from .project import Project
 @click.group()
 def main() -> None:
     """Read-only legacy service analysis."""
+    from .dotenv import load_dotenv, project_root
+    load_dotenv(project_root() / ".env")
 
 
 @main.command()
@@ -90,6 +92,9 @@ def analyze(project: Path, offline: bool, config_path: Path | None, max_usd: flo
     from .llm.litellm_client import Budget, LiteLLMClient, LLMConfig
     from .llm.offline import OfflineLLM
     from .pipeline import run_extract
+    import os
+    if not offline and not dry_run and not any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY")):
+        raise click.ClickException("No LLM API key found. Add `ANTHROPIC_API_KEY=...` (or GEMINI_API_KEY) to the .env file in the migration-agent project root (see .env.example), or use --offline.")
     p = _proj(project)
     if not p.inventory_path.exists():
         run_extract(p)
