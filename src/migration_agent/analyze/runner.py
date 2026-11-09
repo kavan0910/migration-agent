@@ -24,7 +24,7 @@ from .coverage import check_coverage
 from .crossref import resolve_cross_refs
 from .evidence import verify_evidence
 from .gapfill import fill_gaps
-from .merger import Checkpoint, merge_patches, dedupe_fact_endpoints, collapse_entity_components
+from .merger import Checkpoint, with_review, merge_patches, dedupe_fact_endpoints, collapse_entity_components
 from .incremental import (Manifest, Plan, build_manifest, compute_deps, hash_files, load_cost_total,
                           plan_reuse, record_session_cost)
 from .gapfill import GapFillResult
@@ -277,7 +277,7 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
             return None
         return out
 
-    cur = ckpt.load_patches(ids)
+    cur = with_review(ckpt.load_patches(ids), ckpt.load_review_patches())
     res = merge_patches(cur, reg, base=base)
     graph = res.graph
     inv_sig = _sig(inv.model_dump_json())
@@ -296,7 +296,7 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
             if xp is not None:
                 res = merge_patches(cur + [xp], reg, base=base)
                 graph = res.graph
-    graph = collapse_entity_components(dedupe_fact_endpoints(graph))
+    graph = collapse_entity_components(dedupe_fact_endpoints(graph), reg)
     ver = verify_evidence(graph, proj.code)
     graph = ver.graph
     cov = check_coverage(inv, graph)
@@ -314,7 +314,7 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
                 stopped = hit["stopped"]
         if gf is not None:
             res = merge_patches(cur + ([xp] if xp else []) + [gf.patch], reg, base=base)
-            graph = verify_evidence(collapse_entity_components(dedupe_fact_endpoints(res.graph)), proj.code).graph
+            graph = verify_evidence(collapse_entity_components(dedupe_fact_endpoints(res.graph), reg), proj.code).graph
             cov = check_coverage(inv, graph, {k: v["reason"] for k, v in gf.classified.items() if v.get("status") == "excluded"})
     reg.save()
     save_snapshot(proj.graph_dir, graph)

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from ..analyze.chunker import LINE_FMT
 from ..analyze.coverage import check_coverage
 from ..analyze.evidence import verify_evidence
-from ..analyze.merger import collapse_entity_components, dedupe_fact_endpoints, merge_patches
+from ..analyze.merger import Checkpoint, collapse_entity_components, dedupe_fact_endpoints, merge_patches
 from ..analyze.module_analyzer import load_prompt, neutralize, render, run_patch_task
 from ..audit import AuditLog
 from ..extract.treesitter import AstFacts
@@ -106,6 +106,26 @@ def _collect(project: Project) -> tuple[dict[str, list[dict]], list[str], list[s
     return targets, fids, cids
 
 
+def _reuse_file_components(graph: Graph, patches: list) -> list:
+    """A file is one component. If a patch names a component for a file that already has one, treat it as
+    that component (same identity) instead of adding a twin under a different symbol."""
+    existing: dict[str, str] = {}
+    for n in sorted(graph.nodes, key=lambda x: x.id):
+        if n.type == "component" and n.module:
+            existing.setdefault(n.module, n.qualified_symbol)
+
+    def fix(ref):
+        if ref.type == "component" and ref.module in existing and ref.qualified_symbol != existing[ref.module]:
+            return ref.model_copy(update={"qualified_symbol": existing[ref.module]})
+        return ref
+
+    return [p.model_copy(update={
+        "nodes": [fix(n) for n in p.nodes],
+        "edges": [e.model_copy(update={"source": fix(e.source), "target": fix(e.target)}) for e in p.edges],
+        "unresolved": [u.model_copy(update={"from_node": fix(u.from_node)}) for u in p.unresolved],
+    }) for p in patches]
+
+
 def reanalyze(project: Project, llm: LLMClient, *, margin: int = MARGIN) -> ReanalysisResult:
     old = load_latest(project.graph_dir)
     if old is None:
@@ -156,6 +176,8 @@ def reanalyze(project: Project, llm: LLMClient, *, margin: int = MARGIN) -> Rean
                                     skipped=sorted(set(skipped)))
         span["analyzed"] = analyzed
 
+    patches = _reuse_file_components(old, patches)
+
     # The merger keeps the longest responsibility among base+patch, so a re-extracted node would never
     # replace its old text. Blank the old responsibility of nodes the patches re-emit; the new text wins.
     reemitted = {n.key() for p in patches for n in p.nodes if n.responsibility.strip()}
@@ -163,10 +185,11 @@ def reanalyze(project: Project, llm: LLMClient, *, margin: int = MARGIN) -> Rean
         n.model_copy(update={"responsibility": ""}) if (n.type, n.module, n.qualified_symbol) in reemitted else n
         for n in old.nodes]})
     res = merge_patches(patches, reg, base=base)
-    graph = verify_evidence(collapse_entity_components(dedupe_fact_endpoints(res.graph)), project.code).graph
+    graph = verify_evidence(collapse_entity_components(dedupe_fact_endpoints(res.graph), reg), project.code).graph
     reg.save()
     save_snapshot(project.graph_dir, graph)
     new = load_latest(project.graph_dir)
+    Checkpoint(project.root / "checkpoint").save_review_patches(new.version, patches)  # replayed by later `analyze`
 
     d = diff_graphs(old, new)
     _write_doc(project, new, old)

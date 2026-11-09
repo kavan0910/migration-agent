@@ -121,3 +121,23 @@ def test_nothing_to_do(proj):
     res = reanalyze(proj, llm)
     assert res.nothing_to_do and llm.calls == []
     assert generate_changelog(proj).exists()
+
+
+def test_later_analyze_keeps_review_refinements(proj):
+    """A re-run of `analyze` (resume or --incremental) must not revert what a re-analysis refined."""
+    add_comment(proj, proj.comp.id, "be precise")
+    reanalyze(proj, FakeLLM(_responder(proj.comp)))
+    refined = load_latest(proj.graph_dir)
+    assert any(n.qualified_symbol == "ra#rule" for n in refined.nodes)
+    assert next(n for n in refined.nodes if n.id == proj.comp.id).responsibility == "REVISED by reanalysis"
+
+    run_analyze(proj, OfflineLLM())                      # resume: all chunks checkpointed, 0 LLM calls
+    after = load_latest(proj.graph_dir)
+    assert {n.id for n in after.nodes} == {n.id for n in refined.nodes}
+    assert next(n for n in after.nodes if n.id == proj.comp.id).responsibility == "REVISED by reanalysis"
+    assert {(e.source, e.type, e.target) for e in after.edges} == {(e.source, e.type, e.target) for e in refined.edges}
+    ids = lambda g: {(e.source, e.type, e.target): e.id for e in g.edges}
+    assert ids(after) == ids(refined)                    # edge IDs are stable too (no remove+add churn)
+    run_analyze(proj, OfflineLLM(), incremental=True)
+    last = load_latest(proj.graph_dir)
+    assert {n.id for n in last.nodes} == {n.id for n in refined.nodes} and ids(last) == ids(refined)

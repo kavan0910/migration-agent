@@ -138,6 +138,29 @@ class Checkpoint:
         want = sorted(have if ids is None else have & set(ids))
         return [ChunkPatch.model_validate_json((self.chunks / f"{c}.json").read_text()) for c in want]
 
+    # -- review (re-analysis) patches: checkpoint/review/v<NNNN>.json = list of ChunkPatch, one file per graph version.
+    # They are replayed after the chunk patches on every later `analyze`, so review refinements survive re-runs.
+    @property
+    def review_dir(self) -> Path:
+        return self.dir / "review"
+
+    def save_review_patches(self, version: int, patches: "list[ChunkPatch]") -> Path:
+        p = self.review_dir / f"v{version:04d}.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-")
+        with os.fdopen(fd, "w") as f:
+            json.dump([x.model_dump(mode="json") for x in patches], f)
+        os.replace(tmp, p)
+        return p
+
+    def load_review_patches(self) -> "list[ChunkPatch]":
+        if not self.review_dir.is_dir():
+            return []
+        out: list[ChunkPatch] = []
+        for f in sorted(self.review_dir.glob("v*.json")):
+            out += [ChunkPatch.model_validate(x) for x in json.loads(f.read_text())]
+        return out
+
     def load_patch(self, chunk_id: str) -> ChunkPatch | None:
         p = self._path(chunk_id)
         return ChunkPatch.model_validate_json(p.read_text()) if p.exists() else None
@@ -229,38 +252,65 @@ def dedupe_fact_endpoints(graph: Graph) -> Graph:
     return Graph(version=graph.version, nodes=nodes, edges=edges)
 
 
-def collapse_entity_components(graph: Graph) -> Graph:
-    """A file that defines a data entity is that entity, not a separate component: merge the file's
-    component node into the (first) entity node, keeping its inventory refs, and re-point edges
-    (calls touching an entity become depends_on; duplicates and self-loops are dropped)."""
+def _remap_nodes(graph: Graph, remap: dict[str, str], registry: Registry | None, entity_calls: bool) -> Graph:
+    """Drop the nodes in `remap` (old id -> surviving id): inventory refs move to the survivor, edges are
+    re-pointed (IDs follow the final triple via the registry), duplicates and self-loops are dropped.
+    entity_calls: a `calls` edge touching a data entity becomes `depends_on`."""
+    by_id = {n.id: n for n in graph.nodes}
+    nodes = []
+    for n in graph.nodes:
+        if n.id in remap:
+            continue
+        extra = [r for old, new in remap.items() if new == n.id for r in by_id[old].inventory_refs]
+        nodes.append(n.model_copy(update={"inventory_refs": sorted(set(n.inventory_refs) | set(extra))}) if extra else n)
+    ent_ids = {n.id for n in nodes if n.type == "data_entity"}
+    seen, edges = set(), []
+    for e in graph.edges:
+        src, tgt = remap.get(e.source, e.source), remap.get(e.target, e.target)
+        typ = "depends_on" if entity_calls and e.type == "calls" and (src in ent_ids or tgt in ent_ids) else e.type
+        if src == tgt or (src, typ, tgt) in seen:
+            continue
+        seen.add((src, typ, tgt))
+        upd = {"source": src, "target": tgt, "type": typ}
+        if registry is not None and (src, typ, tgt) != (e.source, e.type, e.target):
+            upd["id"] = registry.edge_id(src, typ, tgt)   # re-pointed edge: ID follows its final triple (stable)
+        edges.append(e.model_copy(update=upd))
+    return Graph(version=graph.version, nodes=nodes, edges=edges)
+
+
+def _merge_stub_components(graph: Graph, registry: Registry | None) -> Graph:
+    """The facts skeleton has one component per file ("(facts only...)"); once the model produced the analysed
+    component for that file, the stub is redundant: merge it into the (single) analysed one."""
+    real: dict[str, list[Node]] = {}
+    for n in sorted(graph.nodes, key=lambda x: x.id):
+        if n.type == "component" and not n.responsibility.startswith("(facts only"):
+            real.setdefault(n.module, []).append(n)
+    remap = {n.id: real[n.module][0].id for n in graph.nodes
+             if n.type == "component" and n.responsibility.startswith("(facts only")
+             and len(real.get(n.module, [])) == 1}
+    return _remap_nodes(graph, remap, registry, entity_calls=False) if remap else graph
+
+
+def collapse_entity_components(graph: Graph, registry: Registry | None = None) -> Graph:
+    """Final graph normalisation: (1) merge facts-only stub components into the analysed component of the same
+    file; (2) a file that defines a data entity is that entity, not a separate component (calls touching an
+    entity become depends_on)."""
+    graph = _merge_stub_components(graph, registry)
     ent_by_mod: dict[str, Node] = {}
     for n in sorted(graph.nodes, key=lambda x: x.id):
         if n.type == "data_entity" and n.module:
             ent_by_mod.setdefault(n.module, n)
     remap = {n.id: ent_by_mod[n.module].id for n in graph.nodes
              if n.type == "component" and n.module in ent_by_mod}
-    if not remap:
-        return graph
-    by_id = {n.id: n for n in graph.nodes}
-    absorbed: dict[str, list[str]] = {}
-    for old, new in remap.items():
-        absorbed.setdefault(new, []).append(old)
-    nodes = []
-    for n in graph.nodes:
-        if n.id in remap:
-            continue
-        extra = [r for old in absorbed.get(n.id, ()) for r in by_id[old].inventory_refs]
-        nodes.append(n.model_copy(update={"inventory_refs": sorted(set(n.inventory_refs) | set(extra))}) if extra else n)
-    ent_ids = {n.id for n in nodes if n.type == "data_entity"}
-    seen, edges = {}, []
-    for e in graph.edges:
-        src, tgt = remap.get(e.source, e.source), remap.get(e.target, e.target)
-        typ = "depends_on" if e.type == "calls" and (src in ent_ids or tgt in ent_ids) else e.type
-        if src == tgt:
-            continue
-        k = (src, typ, tgt)
-        if k in seen:
-            continue
-        seen[k] = True
-        edges.append(e.model_copy(update={"source": src, "target": tgt, "type": typ}))
-    return Graph(version=graph.version, nodes=nodes, edges=edges)
+    return _remap_nodes(graph, remap, registry, entity_calls=True) if remap else graph
+
+
+def with_review(chunk_patches: "list[ChunkPatch]", review_patches: "list[ChunkPatch]") -> "list[ChunkPatch]":
+    """Chunk patches followed by review patches. A node a review patch re-emits with new text replaces the
+    earlier text (the merger would otherwise keep the longest responsibility), so blank the older ones."""
+    if not review_patches:
+        return chunk_patches
+    reemitted = {n.key() for p in review_patches for n in p.nodes if n.responsibility.strip()}
+    out = [p.model_copy(update={"nodes": [n.model_copy(update={"responsibility": ""}) if n.key() in reemitted else n
+                                          for n in p.nodes]}) for p in chunk_patches]
+    return out + list(review_patches)

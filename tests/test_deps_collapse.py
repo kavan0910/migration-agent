@@ -44,3 +44,19 @@ def test_collapse_entity_components():
     assert [x.id for x in out.nodes] == ["COMP-0001", "ENT-0001"]
     assert set(next(x for x in out.nodes if x.id == "ENT-0001").inventory_refs) == {"INV-COMP-0002", "INV-ENT-0001"}
     assert [(e.source, e.type, e.target) for e in out.edges] == [("COMP-0001", "depends_on", "ENT-0001")]
+
+
+def test_stub_component_merged_into_analysed_one():
+    from migration_agent.analyze.merger import collapse_entity_components
+    stub = Node(id="COMP-0001", type="component", name="a.js", module="a.js", qualified_symbol="a.js",
+                responsibility="(facts only: not yet analysed)", inventory_refs=["INV-1"])
+    real = Node(id="COMP-0002", type="component", name="App", module="a.js", qualified_symbol="app",
+                responsibility="Starts the app", inventory_refs=[])
+    other = Node(id="COMP-0003", type="component", name="b.js", module="b.js", qualified_symbol="b.js",
+                 responsibility="(facts only: not yet analysed)")      # no analysed twin: stays
+    g = Graph(nodes=[stub, real, other],
+              edges=[Edge(id="EDGE-0001", source="COMP-0003", target="COMP-0001", type="calls")])
+    out = collapse_entity_components(g)
+    assert [n.id for n in out.nodes] == ["COMP-0002", "COMP-0003"]
+    assert out.nodes[0].inventory_refs == ["INV-1"]
+    assert [(e.source, e.target) for e in out.edges] == [("COMP-0003", "COMP-0002")]
