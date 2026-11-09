@@ -16,6 +16,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+  <script>(function(){try{var t=localStorage.getItem("ma-theme");if(!t){t=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";}document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();</script>
   <link rel="stylesheet" href="styles.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
     {"@type":"Question","name":"Does it change my code?","acceptedAnswer":{"@type":"Answer","text":"No. It copies your source into a project folder and reads only that copy."}},
@@ -23,6 +24,7 @@
 </head>
 <body>
   <a class="skip body-5" href="#main">Skip to content</a>
+  <div class="progress" id="progress" aria-hidden="true"></div>
 
   <div class="nav-wrap">
     <header class="nav">
@@ -34,6 +36,7 @@
         <a href="#faq">FAQ</a>
       </nav>
       <a class="btn btn-primary button-sm" href="#quickstart">Run the quickstart</a>
+      <button class="theme-btn" id="theme" type="button" aria-label="Switch to light theme"><i class="ph ph-sun sun" aria-hidden="true"></i><i class="ph ph-moon moon" aria-hidden="true"></i></button>
       <button class="menu-btn" id="menu" aria-expanded="false" aria-controls="panel" aria-label="Open menu"><span></span><span></span><span></span></button>
     </header>
   </div>
@@ -48,6 +51,13 @@
   <main id="main">
     <!-- Hero -->
     <section class="hero" id="top">
+      <div class="float" aria-hidden="true">
+        <span class="c" style="left:6vw;top:200px;width:48px;height:48px;--x:30px;--y:-40px;--t:15s"></span>
+        <span class="r" style="left:14vw;top:520px;width:32px;height:32px;--x:-20px;--y:36px;--r:-20deg;--t:12s"></span>
+        <span class="r" style="right:8vw;top:240px;width:56px;height:56px;--x:-28px;--y:30px;--r:18deg;--t:17s"></span>
+        <span class="c" style="right:16vw;top:560px;width:24px;height:24px;--x:24px;--y:-34px;--t:11s"></span>
+        <span class="c" style="left:30vw;top:130px;width:12px;height:12px;--x:16px;--y:24px;--t:9s"></span>
+      </div>
       <div class="container hero-inner">
         <h1 class="heading-1 reveal">Understand a legacy service before you migrate it</h1>
         <p class="sub title-2 reveal" data-d="1">migration agent reads your code in a read only sandbox and writes an understanding doc and a knowledge graph. Every claim cites a file and a line.</p>
@@ -55,12 +65,43 @@
           <a class="btn btn-primary btn-lg" href="#quickstart">Run the quickstart <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
           <span class="proof body-6"><i class="ph ph-seal-check" aria-hidden="true"></i>Tested on three reference repos: Express, Spring and Django</span>
         </div>
-        <div class="term reveal" data-d="3" role="img" aria-label="Terminal showing migration agent ingesting, extracting and analyzing a service">
-          <div class="term-bar"><b></b><b></b><b></b><span>~/legacy-service</span></div>
-          <div class="term-body" id="term" aria-hidden="true"></div>
+        <div class="hero-visual reveal" data-d="3">
+          <div class="term" role="img" aria-label="Terminal showing migration agent ingesting, extracting and analyzing a service">
+            <div class="term-bar"><b></b><b></b><b></b><span>~/legacy-service</span></div>
+            <div class="term-body" id="term" aria-hidden="true"></div>
+          </div>
+          <div class="gcard" role="img" aria-label="Knowledge graph: the orders endpoint calls orderService.js, which reads and writes the Order and Product entities and implements the Bulk Order Discount rule">
+            <header><span class="title-3">Knowledge graph</span><span class="live caption-4"><b></b>39 nodes, 30 edges</span></header>
+            <svg class="gsvg" id="gsvg" viewBox="0 0 460 340" aria-hidden="true">
+              <g stroke-linecap="round">
+                <line class="edge" style="--i:3" x1="105" y1="72" x2="105" y2="136" />
+                <line class="edge" style="--i:5" x1="85" y1="192" x2="90" y2="262" />
+                <line class="edge" style="--i:6" x1="150" y1="192" x2="296" y2="262" />
+                <line class="edge" style="--i:7" x1="195" y1="164" x2="262" y2="164" />
+              </g>
+              <circle class="dot" style="--i:3;--dx:0px;--dy:60px;--d:2.6s" cx="105" cy="74" r="4" />
+              <circle class="dot" style="--i:5;--dx:5px;--dy:66px;--d:3.1s" cx="85" cy="194" r="4" />
+              <circle class="dot" style="--i:6;--dx:144px;--dy:66px;--d:3.4s" cx="150" cy="194" r="4" />
+              <circle class="dot" style="--i:7;--dx:64px;--dy:0px;--d:2.2s" cx="197" cy="164" r="4" />
+              <g class="node comp" style="--i:1"><rect x="20" y="20" width="170" height="52" rx="12"/><text x="36" y="42">GET /api/orders</text><text class="sub" x="36" y="60">endpoint</text></g>
+              <g class="node comp" style="--i:2"><rect x="20" y="136" width="175" height="56" rx="12"/><text x="36" y="160">orderService.js</text><text class="sub" x="36" y="178">COMP-0012</text></g>
+              <g class="node ent" style="--i:4"><rect x="30" y="262" width="110" height="56" rx="12"/><text x="46" y="286">Order</text><text class="sub" x="46" y="304">ENT-0001</text></g>
+              <g class="node ent" style="--i:6"><rect x="270" y="262" width="150" height="56" rx="12"/><text x="286" y="286">Product</text><text class="sub" x="286" y="304">ENT-0002</text></g>
+              <rect class="pulse" x="262" y="136" width="176" height="56" rx="12" />
+              <g class="node rule" style="--i:7"><rect x="262" y="136" width="176" height="56" rx="12"/><text x="278" y="160">Bulk discount</text><text class="sub" x="278" y="178">RULE-0003</text></g>
+            </svg>
+          </div>
         </div>
       </div>
     </section>
+
+    <!-- Marquee -->
+    <div class="marquee" aria-label="Supported frameworks and formats">
+      <p class="lead caption-1">Reads routes, schemas and specs from</p>
+      <div class="track" aria-hidden="true">
+        <span class="chip caption-1"><i class="ph ph-check-circle"></i>Express</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Spring</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Flask</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>FastAPI</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Rails</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>ASP.NET</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Django</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Flyway</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Alembic</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Prisma</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>TypeORM</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>OpenAPI</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Protobuf</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Express</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Spring</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Flask</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>FastAPI</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Rails</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>ASP.NET</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Django</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Flyway</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Alembic</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Prisma</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>TypeORM</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>OpenAPI</span><span class="chip caption-1"><i class="ph ph-check-circle"></i>Protobuf</span>
+      </div>
+    </div>
 
     <!-- Benefits -->
     <section class="section" id="benefits">
@@ -94,6 +135,33 @@
           <span class="eyebrow caption-1"><i class="ph ph-play-circle" aria-hidden="true"></i>Demo</span>
           <h2 class="heading-2">Watch it catch a wrong requirement</h2>
           <p class="body-3">A 25 second run on a sample Express service. The requirements doc promises a 25% bulk discount. The code applies 10% over 500.</p>
+        </div>
+        <div class="bento">
+          <article class="bcard reveal">
+            <span class="eyebrow caption-1" style="margin:0"><i class="ph ph-magnifying-glass" aria-hidden="true"></i>Evidence</span>
+            <div class="codebox" role="img" aria-label="orderService.js lines 21 to 25 with lines 22 to 24 highlighted">
+              <span class="hl"></span>
+              <div class="ln"><b>21</b>  }</div>
+              <div class="ln"><b>22</b>  if (total &gt; 500) {</div>
+              <div class="ln"><b>23</b>    total = total * 0.9; // bulk discount of 10% over 500</div>
+              <div class="ln"><b>24</b>  }</div>
+              <div class="ln"><b>25</b>  const order = await Order.create({ customerEmail: email, total });</div>
+            </div>
+            <span class="chipev"><i class="ph ph-link" aria-hidden="true"></i>RULE-0003 · src/services/orderService.js:22-24</span>
+            <h3 class="title-1">Every rule points back to its lines</h3>
+            <p class="body-6">The highlighted range is the evidence the model cited. If the lines do not exist, the rule is dropped.</p>
+          </article>
+          <article class="bcard reveal" data-d="1">
+            <span class="eyebrow caption-1" style="margin:0"><i class="ph ph-git-diff" aria-hidden="true"></i>Verifier</span>
+            <div class="vs">
+              <div class="box bad"><small>requirements.md</small><b>25%</b><p class="body-6" style="margin-top:var(--s-50)">bulk discount for 10 or more items</p></div>
+              <span class="x" aria-hidden="true"><i class="ph ph-x"></i></span>
+              <div class="box good"><small>orderService.js:22</small><b>10%</b><p class="body-6" style="margin-top:var(--s-50)">when the total is over 500</p></div>
+            </div>
+            <div class="finding"><span class="tag hi">F-0001 · high</span><span>Inconsistent Discount Rules</span><span class="muted">contradiction</span></div>
+            <h3 class="title-1">Your docs get checked against the code</h3>
+            <p class="body-6">The Verifier only sees the generated doc and your docs, then reports what disagrees.</p>
+          </article>
         </div>
         <video class="reveal" controls preload="metadata" poster="og.jpg" style="width:100%;max-width:920px;border-radius:16px;border:1px solid var(--border);display:block">
           <source src="demo.mp4" type="video/mp4">
@@ -131,20 +199,20 @@ migration-agent resolve service.migration F-0001</code></pre></article>
           <p class="body-3">We labelled the expected components, endpoints, entities, rules and edges for three small reference repos, and score every run against them.</p>
         </div>
         <div class="stats">
-          <div class="stat reveal"><b class="mono">100%</b><span class="body-6">of cited evidence points to a real file and line range</span></div>
-          <div class="stat reveal" data-d="1"><b class="mono">0</b><span class="body-6">prompt injection canary strings found in the generated graph</span></div>
-          <div class="stat reveal" data-d="2"><b class="mono">576</b><span class="body-6">automated tests, including 133 red team tests</span></div>
+          <div class="stat reveal"><b class="mono"><span data-count="100">100</span>%</b><span class="body-6">of cited evidence points to a real file and line range</span></div>
+          <div class="stat reveal" data-d="1"><b class="mono"><span data-count="0">0</span></b><span class="body-6">prompt injection canary strings found in the generated graph</span></div>
+          <div class="stat reveal" data-d="2"><b class="mono"><span data-count="576">576</span></b><span class="body-6">automated tests, including 133 red team tests</span></div>
         </div>
         <div class="table-wrap reveal">
           <table>
             <caption class="body-6 muted" style="text-align:left;padding:var(--s-200) var(--s-300)">F1 score per category on the Express sample (latest run)</caption>
             <thead><tr><th scope="col">Category</th><th scope="col">F1</th><th scope="col">What it measures</th></tr></thead>
             <tbody>
-              <tr><td>Components</td><td class="num">0.96</td><td>One per source file, matched by file</td></tr>
-              <tr><td>Endpoints</td><td class="num">1.00</td><td>Method and full path, including router mount prefixes</td></tr>
-              <tr><td>Entities</td><td class="num">1.00</td><td>Data models and tables</td></tr>
-              <tr><td>Business rules</td><td class="num">0.92</td><td>Matched by file and overlapping evidence lines</td></tr>
-              <tr><td>Edges</td><td class="num">0.57</td><td>Calls and dependencies. This is our weakest category.</td></tr>
+              <tr><td>Components</td><td class="num"><span class="barcell"><span>0.96</span><span class="bar" aria-hidden="true"><i style="--v:0.96;--k:0"></i></span></span></td><td>One per source file, matched by file</td></tr>
+              <tr><td>Endpoints</td><td class="num"><span class="barcell"><span>1.00</span><span class="bar" aria-hidden="true"><i style="--v:1.00;--k:1"></i></span></span></td><td>Method and full path, including router mount prefixes</td></tr>
+              <tr><td>Entities</td><td class="num"><span class="barcell"><span>1.00</span><span class="bar" aria-hidden="true"><i style="--v:1.00;--k:2"></i></span></span></td><td>Data models and tables</td></tr>
+              <tr><td>Business rules</td><td class="num"><span class="barcell"><span>0.92</span><span class="bar" aria-hidden="true"><i style="--v:0.92;--k:3"></i></span></span></td><td>Matched by file and overlapping evidence lines</td></tr>
+              <tr><td>Edges</td><td class="num"><span class="barcell"><span>0.57</span><span class="bar weak" aria-hidden="true"><i style="--v:0.57;--k:4"></i></span></span></td><td>Calls and dependencies. This is our weakest category.</td></tr>
             </tbody>
           </table>
         </div>
