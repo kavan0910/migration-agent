@@ -1,0 +1,1 @@
+Introducing migration-agent: read-only legacy service analysis. It maps the service, cites file:line evidence for every claim, and checks it against your requirements docs. In the demo it flags a doc that promises a 25% bulk discount while the code applies 10% over 500.

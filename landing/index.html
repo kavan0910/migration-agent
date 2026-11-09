@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>migration agent: understand a legacy service before you migrate it</title>
+  <meta name="description" content="A read only CLI that maps a legacy service, cites a file and line for every claim, and checks the result against your own requirements docs. Runs locally.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Understand a legacy service before you migrate it">
+  <meta property="og:description" content="Every claim cites a file and line. Your docs get checked against the code. Runs locally in a read only sandbox.">
+  <meta property="og:image" content="og.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000'/%3E%3Cpath d='M8 21l5-5-5-5M15 22h9' stroke='%235eead4' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+  <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+    {"@type":"Question","name":"Does it change my code?","acceptedAnswer":{"@type":"Answer","text":"No. It copies your source into a project folder and reads only that copy."}},
+    {"@type":"Question","name":"Which models can it use?","acceptedAnswer":{"@type":"Answer","text":"Any provider LiteLLM supports. Sample configs are included for Gemini and Anthropic."}}]}</script>
+</head>
+<body>
+  <a class="skip body-5" href="#main">Skip to content</a>
+
+  <div class="nav-wrap">
+    <header class="nav">
+      <a class="logo" href="#top" aria-label="migration agent, home"><i class="ph ph-terminal-window" aria-hidden="true"></i>migration-agent</a>
+      <nav class="nav-links body-5" aria-label="Primary">
+        <a href="#benefits">Benefits</a>
+        <a href="#how">How it works</a>
+        <a href="#proof">Proof</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a class="btn btn-primary button-sm" href="#quickstart">Run the quickstart</a>
+      <button class="menu-btn" id="menu" aria-expanded="false" aria-controls="panel" aria-label="Open menu"><span></span><span></span><span></span></button>
+    </header>
+  </div>
+  <div class="panel" id="panel" data-open="false" aria-hidden="true">
+    <a class="plink" style="--i:0" href="#benefits">Benefits</a>
+    <a class="plink" style="--i:1" href="#how">How it works</a>
+    <a class="plink" style="--i:2" href="#proof">Proof</a>
+    <a class="plink" style="--i:3" href="#faq">FAQ</a>
+    <a class="plink" style="--i:4" href="#quickstart">Quickstart</a>
+  </div>
+
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero" id="top">
+      <div class="container hero-inner">
+        <h1 class="heading-1 reveal">Understand a legacy service before you migrate it</h1>
+        <p class="sub title-2 reveal" data-d="1">migration agent reads your code in a read only sandbox and writes an understanding doc and a knowledge graph. Every claim cites a file and a line.</p>
+        <div class="hero-cta reveal" data-d="2">
+          <a class="btn btn-primary btn-lg" href="#quickstart">Run the quickstart <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+          <span class="proof body-6"><i class="ph ph-seal-check" aria-hidden="true"></i>Tested on three reference repos: Express, Spring and Django</span>
+        </div>
+        <div class="term reveal" data-d="3" role="img" aria-label="Terminal showing migration agent ingesting, extracting and analyzing a service">
+          <div class="term-bar"><b></b><b></b><b></b><span>~/legacy-service</span></div>
+          <div class="term-body" id="term" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Benefits -->
+    <section class="section" id="benefits">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow caption-1"><i class="ph ph-list-checks" aria-hidden="true"></i>Benefits</span>
+          <h2 class="heading-2">A map of the service you can check, not a summary you have to trust</h2>
+        </div>
+        <div class="grid-3">
+          <article class="card reveal"><span class="ic"><i class="ph ph-seal-check" aria-hidden="true"></i></span><h3 class="title-1">Evidence on every claim</h3><p class="body-6">Each node and edge carries a file and line range. Evidence that does not exist in the code is dropped before it reaches the doc.</p></article>
+          <article class="card reveal" data-d="1"><span class="ic"><i class="ph ph-git-diff" aria-hidden="true"></i></span><h3 class="title-1">A Verifier that never sees your code</h3><p class="body-6">It compares the generated doc with your own requirements docs and reports contradictions, doc only items and code only gaps. Every quote is string checked.</p></article>
+          <article class="card reveal" data-d="2"><span class="ic"><i class="ph ph-lock-key" aria-hidden="true"></i></span><h3 class="title-1">Read only and local</h3><p class="body-6">It works on a copy of your source. Secrets are redacted at ingest, and the review server listens on <code>127.0.0.1</code> behind a token.</p></article>
+          <article class="card reveal"><span class="ic"><i class="ph ph-coins" aria-hidden="true"></i></span><h3 class="title-1">A hard budget and cheap re runs</h3><p class="body-6">Set <code>--max-usd</code> to stop a run gracefully. An incremental re run of unchanged code makes zero model calls.</p></article>
+          <article class="card reveal" data-d="1"><span class="ic"><i class="ph ph-plugs-connected" aria-hidden="true"></i></span><h3 class="title-1">Bring your own model</h3><p class="body-6">Any provider LiteLLM supports, set per task. Sample configs for Gemini and Anthropic are included, and a custom endpoint is one setting.</p></article>
+          <article class="card reveal" data-d="2"><span class="ic"><i class="ph ph-chat-circle-text" aria-hidden="true"></i></span><h3 class="title-1">A review loop that stays small</h3><p class="body-6">Comment on an item or resolve a finding, and only the code around that node is re analyzed. A changelog records what changed and why.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tagline reveal -->
+    <section class="tagline" aria-label="Our promise">
+      <div class="container">
+        <p id="tagline">Every claim points to a line of code. Every document is checked against the code. Nothing leaves your machine except the model call you configure.</p>
+      </div>
+    </section>
+
+    <!-- Demo video -->
+    <section class="section" id="demo">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow caption-1"><i class="ph ph-play-circle" aria-hidden="true"></i>Demo</span>
+          <h2 class="heading-2">Watch it catch a wrong requirement</h2>
+          <p class="body-3">A 25 second run on a sample Express service. The requirements doc promises a 25% bulk discount. The code applies 10% over 500.</p>
+        </div>
+        <video class="reveal" controls preload="metadata" poster="og.jpg" style="width:100%;max-width:920px;border-radius:16px;border:1px solid var(--border);display:block">
+          <source src="demo.mp4" type="video/mp4">
+          Your browser cannot play this video. The same run is described in the quickstart below.
+        </video>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="section" id="how" style="background:var(--surface-1)">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow caption-1"><i class="ph ph-path" aria-hidden="true"></i>How it works</span>
+          <h2 class="heading-2">Three steps from source folder to reviewed doc</h2>
+        </div>
+        <div class="steps">
+          <article class="step reveal"><span class="n caption-1">01</span><h3 class="title-1">Ingest and extract</h3><p class="body-6">Copy the source into the project, redact secrets, then pull static facts: routes, config keys, dependencies and file to file imports.</p><pre><code>migration-agent init ./service
+migration-agent ingest service.migration
+migration-agent extract service.migration</code></pre></article>
+          <article class="step reveal" data-d="1"><span class="n caption-1">02</span><h3 class="title-1">Analyze</h3><p class="body-6">The model reads chunks of code and returns nodes, edges and business rules. Each one is checked against the real file and line, and coverage is reported.</p><pre><code>migration-agent analyze service.migration \
+  --config gemini.config.json --max-usd 1</code></pre></article>
+          <article class="step reveal" data-d="2"><span class="n caption-1">03</span><h3 class="title-1">Verify and review</h3><p class="body-6">Drop your requirements into the project, run the Verifier, then resolve findings in the local review page. Only the touched nodes are re analyzed.</p><pre><code>migration-agent verify service.migration
+migration-agent review service.migration
+migration-agent resolve service.migration F-0001</code></pre></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Proof -->
+    <section class="section" id="proof">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow caption-1"><i class="ph ph-chart-bar" aria-hidden="true"></i>Proof</span>
+          <h2 class="heading-2">Measured against hand labelled answers</h2>
+          <p class="body-3">We labelled the expected components, endpoints, entities, rules and edges for three small reference repos, and score every run against them.</p>
+        </div>
+        <div class="stats">
+          <div class="stat reveal"><b class="mono">100%</b><span class="body-6">of cited evidence points to a real file and line range</span></div>
+          <div class="stat reveal" data-d="1"><b class="mono">0</b><span class="body-6">prompt injection canary strings found in the generated graph</span></div>
+          <div class="stat reveal" data-d="2"><b class="mono">576</b><span class="body-6">automated tests, including 133 red team tests</span></div>
+        </div>
+        <div class="table-wrap reveal">
+          <table>
+            <caption class="body-6 muted" style="text-align:left;padding:var(--s-200) var(--s-300)">F1 score per category on the Express sample (latest run)</caption>
+            <thead><tr><th scope="col">Category</th><th scope="col">F1</th><th scope="col">What it measures</th></tr></thead>
+            <tbody>
+              <tr><td>Components</td><td class="num">0.96</td><td>One per source file, matched by file</td></tr>
+              <tr><td>Endpoints</td><td class="num">1.00</td><td>Method and full path, including router mount prefixes</td></tr>
+              <tr><td>Entities</td><td class="num">1.00</td><td>Data models and tables</td></tr>
+              <tr><td>Business rules</td><td class="num">0.92</td><td>Matched by file and overlapping evidence lines</td></tr>
+              <tr><td>Edges</td><td class="num">0.57</td><td>Calls and dependencies. This is our weakest category.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note body-6">The labels are small and hand written, so treat these as a regression guide, not a benchmark. The Spring and Django samples score in a similar range, and edges are lowest on both.</p>
+      </div>
+    </section>
+
+    <!-- Quickstart -->
+    <section class="section" id="quickstart" style="background:var(--surface-1)">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow caption-1"><i class="ph ph-rocket-launch" aria-hidden="true"></i>Quickstart</span>
+          <h2 class="heading-2">Run it on your own service in about five minutes</h2>
+          <p class="body-3">Needs Python 3.12 and an API key for the model you choose. Put the key in a <code>.env</code> file in the project root, never on the command line.</p>
+        </div>
+        <div class="qs reveal">
+          <div class="qs-head"><span class="caption-1 muted mono">terminal</span><button class="copy button-sm" id="copy" data-state="idle" type="button"><i class="ph ph-copy" aria-hidden="true"></i><span>Copy</span></button></div>
+<pre id="cmds"><code><span class="c"># get the source: {{repository url}}</span>
+uv pip install -e ".[llm]"
+echo "GEMINI_API_KEY=your key here" &gt; .env
+
+migration-agent init ./my-service
+migration-agent ingest my-service.migration
+migration-agent extract my-service.migration
+migration-agent analyze my-service.migration --dry-run   <span class="c"># estimate first</span>
+migration-agent analyze my-service.migration --config gemini.config.json --max-usd 1
+migration-agent review my-service.migration</code></pre>
+          <p class="qs-msg body-6" id="copymsg" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow caption-1"><i class="ph ph-question" aria-hidden="true"></i>FAQ</span>
+          <h2 class="heading-2">Questions before you try it</h2>
+        </div>
+        <div class="faq reveal">
+          <details><summary class="title-2">Does it change my code?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">No. Ingest copies your source into a project folder, and every later step reads that copy only. Archives and git sources are validated for path traversal, symlink escapes and decompression bombs.</p></details>
+          <details><summary class="title-2">Which languages and frameworks does it understand?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">Static extraction covers Python, JavaScript, TypeScript and Java files. Route extractors cover Express, Spring, Flask, FastAPI, Rails, ASP.NET and Django. Schema extractors cover Flyway, Alembic, Prisma and TypeORM, and OpenAPI and proto files are parsed. The model fills in everything else.</p></details>
+          <details><summary class="title-2">Which models can I use?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">Any provider LiteLLM supports, chosen per task in a config file or with <code>MA_*</code> environment variables. We have run it with Gemini models. Sample configs for Anthropic models are included but we have not run them.</p></details>
+          <details><summary class="title-2">What does a run cost?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">Run <code>analyze --dry-run</code> for an estimate before spending anything. On the 18 file Express sample the plan estimated $0.01. <code>--max-usd</code> is a hard stop, and a run that reaches it keeps its partial results.</p></details>
+          <details><summary class="title-2">What happens to secrets in my repo?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">Ingest redacts credential patterns and withholds key and environment files before anything reaches a prompt, a cache or a document. Redaction is pattern based, so unusual secrets can still slip through. The threat model lists this as a known risk.</p></details>
+          <details><summary class="title-2">Does anything leave my machine?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">Only the calls to the model endpoint you configure, plus a git clone if your source is a git URL. The offline commands open no outside connections, and the review server binds to <code>127.0.0.1</code> with a per run token.</p></details>
+          <details><summary class="title-2">Can it handle a large repository?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">Chunk planning handled a synthetic 2,420 file repo in about a tenth of a second in our tests, and incremental runs re analyze only changed files and their direct importers. We have not run a model over a repo that size yet.</p></details>
+          <details><summary class="title-2">Is it open source, and what does it cost?<i class="ph ph-caret-down" aria-hidden="true"></i></summary><p class="a body-3">{{license and pricing}}</p></details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="section final">
+      <div class="container">
+        <div class="in reveal">
+          <h2 class="heading-3">Find out what your service really does</h2>
+          <p class="body-3">Run it on a copy of your code. It stays read only, it stays local, and you set the budget.</p>
+          <a class="btn btn-primary btn-lg" href="#quickstart">Run the quickstart <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container foot body-6">
+      <span class="mono">migration-agent</span>
+      <nav aria-label="Footer"><a href="privacy.html">Privacy policy</a><a href="terms.html">Terms</a><a href="#top">Back to top</a></nav>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ground: #0a0d12;
+        --panel: #121722;
+        --line: #1f2733;
+        --ink: #e8edf4;
+        --muted: #9aa6b8;
+        --mint: #5eead4;
+        --amber: #fbbf24;
+        --red: #f87171;
+        --font-display: -apple-system, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        --font-mono: "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ground); }
+      #root { position: relative; width: 1920px; height: 1080px; background: var(--ground); font-family: var(--font-display); color: var(--ink); overflow: hidden; }
+      .scene { position: absolute; inset: 0; }
+      #glow { position: absolute; left: 50%; top: 50%; width: 1500px; height: 1500px; margin: -750px 0 0 -750px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(94,234,212,0.16) 0%, rgba(94,234,212,0) 62%); opacity: 0.5; }
+
+      /* hook + title */
+      .hook { position: absolute; left: 0; right: 0; text-align: center; font-weight: 700; letter-spacing: -0.035em; font-size: 128px; line-height: 1.05; }
+      #h1 { top: 340px; }
+      #h2 { top: 490px; color: var(--muted); }
+      #title { position: absolute; left: 0; right: 0; top: 380px; text-align: center; font-family: var(--font-mono); font-weight: 700; font-size: 150px; letter-spacing: -0.04em; }
+      #title .accent { color: var(--mint); }
+      #tag { position: absolute; left: 0; right: 0; top: 590px; text-align: center; font-size: 46px; color: var(--muted); letter-spacing: -0.01em; }
+      #rule { position: absolute; left: 50%; top: 560px; width: 0; height: 4px; margin-left: 0; background: var(--mint); transform: translateX(-50%); }
+
+      /* terminal */
+      .term { position: absolute; left: 180px; top: 150px; width: 1560px; height: 780px; background: var(--panel); border: 1px solid var(--line); border-radius: 22px; box-shadow: 0 40px 120px rgba(0,0,0,0.5); overflow: hidden; }
+      .term .bar { height: 64px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 0 26px; }
+      .term .dot { width: 16px; height: 16px; border-radius: 50%; background: #2b3444; }
+      .term .ttl { margin-left: 18px; font-family: var(--font-mono); font-size: 28px; color: var(--muted); }
+      .term .body { padding: 34px 44px; font-family: var(--font-mono); font-size: 28px; line-height: 1.5; }
+      .ln { white-space: nowrap; }
+      .cmd { display: flex; margin-top: 18px; }
+      .cmd .p { color: var(--mint); margin-right: 16px; }
+      .typed { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; }
+      .out { color: var(--ink); opacity: 0; }
+      .out .k { color: var(--mint); }
+      .out .m { color: var(--muted); }
+      #cov { display: inline-block; border-radius: 6px; padding: 0 6px; }
+
+      /* graph scene */
+      .graph { position: absolute; left: 90px; top: 130px; width: 1000px; height: 820px; }
+      .node { position: absolute; padding: 12px 20px; border-radius: 14px; background: var(--panel); border: 2px solid var(--line); font-family: var(--font-mono); font-size: 28px; white-space: nowrap; opacity: 0; }
+      .node small { display: block; color: var(--muted); font-size: 28px; margin-bottom: 2px; }
+      .node.rule { border-color: var(--amber); }
+      .node.ent { border-color: #7aa2ff; }
+      .node.comp { border-color: var(--mint); }
+      svg.edges { position: absolute; inset: 0; width: 1000px; height: 820px; }
+      svg.edges line { stroke: #3a4658; stroke-width: 3; }
+      .card { position: absolute; right: 90px; top: 210px; width: 680px; background: var(--panel); border: 2px solid var(--amber); border-radius: 22px; padding: 38px 42px; opacity: 0; box-shadow: 0 30px 90px rgba(251,191,36,0.10); }
+      .card .id { font-family: var(--font-mono); font-size: 28px; color: var(--amber); }
+      .card h3 { font-size: 46px; letter-spacing: -0.02em; margin: 10px 0 18px; }
+      .card p { font-size: 32px; line-height: 1.35; color: var(--ink); }
+      .card .ev { margin-top: 26px; font-family: var(--font-mono); font-size: 28px; color: var(--mint); opacity: 0; }
+
+      /* verify scene */
+      .pane { position: absolute; top: 150px; width: 800px; height: 430px; background: var(--panel); border: 2px solid var(--line); border-radius: 22px; padding: 34px 40px; opacity: 0; }
+      #p1 { left: 100px; } #p2 { right: 100px; }
+      .pane .lab { font-family: var(--font-mono); font-size: 28px; color: var(--muted); margin-bottom: 22px; }
+      .pane .big { font-size: 46px; line-height: 1.25; letter-spacing: -0.02em; }
+      .pane code { display: block; font-family: var(--font-mono); font-size: 30px; line-height: 1.5; color: var(--ink); }
+      .num-bad { color: var(--red); } .num-good { color: var(--mint); }
+      .chip { position: absolute; left: 100px; right: 100px; height: 112px; border-radius: 20px; background: var(--panel); border: 2px solid var(--line); display: flex; align-items: center; gap: 26px; padding: 0 36px; opacity: 0; }
+      .chip .sev { font-family: var(--font-mono); font-size: 28px; border-radius: 10px; padding: 8px 16px; }
+      .chip .t { font-size: 38px; letter-spacing: -0.015em; }
+      .chip .k { margin-left: auto; font-family: var(--font-mono); font-size: 28px; color: var(--muted); }
+      #c1 { top: 640px; border-color: var(--red); } #c1 .sev { background: rgba(248,113,113,0.15); color: var(--red); }
+      #c2 { top: 780px; border-color: var(--amber); } #c2 .sev { background: rgba(251,191,36,0.15); color: var(--amber); }
+
+      /* end card */
+      #end { position: absolute; inset: 0; opacity: 0; }
+      #end .t { position: absolute; left: 0; right: 0; top: 400px; text-align: center; font-family: var(--font-mono); font-weight: 700; font-size: 140px; letter-spacing: -0.04em; }
+      #end .t span { color: var(--mint); }
+      #end .s { position: absolute; left: 0; right: 0; top: 580px; text-align: center; font-size: 46px; color: var(--muted); }
+      #end .c2 { position: absolute; left: 0; right: 0; top: 750px; text-align: center; font-family: var(--font-mono); font-size: 28px; color: var(--mint); }
+      #end .c { position: absolute; left: 0; right: 0; top: 690px; text-align: center; font-family: var(--font-mono); font-size: 28px; color: var(--mint); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="25" data-width="1920" data-height="1080">
+      <div id="glow" class="clip" data-start="0" data-duration="25" data-track-index="0"></div>
+
+      <!-- Scene 1: hook -->
+      <div id="s1" class="scene clip" data-start="0" data-duration="3.7" data-track-index="1">
+        <div class="hook" id="h1">Nobody remembers</div>
+        <div class="hook" id="h2">how this service works.</div>
+      </div>
+
+      <!-- Scene 2: title -->
+      <div id="s2" class="scene clip" data-start="3.7" data-duration="3.4" data-track-index="1">
+        <div id="title">migration<span class="accent">-agent</span></div>
+        <div id="rule"></div>
+        <div id="tag">Read-only legacy service analysis.</div>
+      </div>
+
+      <!-- Scene 3: the run -->
+      <div id="s3" class="scene clip" data-start="6.86" data-duration="6.84" data-track-index="1">
+        <div class="term">
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ttl">~/legacy-service</span></div>
+          <div class="body">
+            <div class="ln cmd"><span class="p">$</span><span class="typed" id="t1">migration-agent ingest demo.migration</span></div>
+            <div class="ln out" id="o1">ingested <span class="k">18</span> files, skipped 1, <span class="k">secret findings 2</span></div>
+            <div class="ln cmd"><span class="p">$</span><span class="typed" id="t2">migration-agent extract demo.migration</span></div>
+            <div class="ln out" id="o2">inventory: <span class="k">29</span> items {'config_key': 4, 'dependency': 3, 'route': 8, 'source_file': 14}</div>
+            <div class="ln cmd"><span class="p">$</span><span class="typed" id="t3">migration-agent analyze demo.migration --max-usd 1</span></div>
+            <div class="ln out" id="o3">plan: 1 chunk(s), estimated cost <span class="k">$0.01</span></div>
+            <div class="ln out" id="o5">done: {'chunks': 1, 'nodes': 39, 'edges': 30, <span id="cov">'coverage_complete': True</span>, …}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 4: the graph -->
+      <div id="s4" class="scene clip" data-start="13.7" data-duration="4.3" data-track-index="1">
+        <div class="graph">
+          <svg class="edges" viewBox="0 0 1000 820">
+            <line id="e1" x1="170" y1="130" x2="170" y2="330" />
+            <line id="e2" x1="170" y1="330" x2="500" y2="520" />
+            <line id="e3" x1="170" y1="330" x2="140" y2="690" />
+            <line id="e4" x1="170" y1="330" x2="650" y2="330" />
+          </svg>
+          <div class="node comp" id="n1" style="left:20px;top:80px"><small>endpoint</small>GET /api/orders</div>
+          <div class="node comp" id="n2" style="left:20px;top:280px"><small>COMP-0012</small>orderService.js</div>
+          <div class="node ent" id="n3" style="left:400px;top:480px"><small>ENT-0001</small>Order</div>
+          <div class="node ent" id="n4" style="left:20px;top:640px"><small>ENT-0002</small>Product</div>
+          <div class="node rule" id="n5" style="left:560px;top:280px"><small>RULE-0003</small>Bulk Order Discount</div>
+        </div>
+        <div class="card" id="card">
+          <div class="id">RULE-0003</div>
+          <h3>Bulk Order Discount</h3>
+          <p>Applies a 10% discount to the order total if the total calculation exceeds 500.</p>
+          <div class="ev" id="ev">evidence: src/services/orderService.js:22-24</div>
+        </div>
+      </div>
+
+      <!-- Scene 5: the catch -->
+      <div id="s5" class="scene clip" data-start="17.91" data-duration="4.9" data-track-index="1">
+        <div class="pane" id="p1">
+          <div class="lab">user_docs/requirements.md</div>
+          <div class="big">Orders of 10 or more items receive a <span class="num-bad">25%</span> bulk discount.</div>
+        </div>
+        <div class="pane" id="p2">
+          <div class="lab">src/services/orderService.js:22</div>
+          <code>if (total &gt; 500) {<br>&nbsp;&nbsp;total = total * <span class="num-good">0.9</span>;<br>}</code>
+        </div>
+        <div class="chip" id="c1"><span class="sev">F-0001 · high</span><span class="t">Inconsistent Discount Rules</span><span class="k">contradiction</span></div>
+        <div class="chip" id="c2"><span class="sev">F-0002 · medium</span><span class="t">Missing Order Confirmation Email Logic</span><span class="k">doc_only</span></div>
+      </div>
+
+      <!-- Scene 6: review loop + end card -->
+      <div id="s6" class="scene clip" data-start="22.64" data-duration="2.36" data-track-index="1">
+        <div id="end">
+          <div class="t">migration<span>-agent</span></div>
+          <div class="s">Read-only legacy service analysis.</div>
+          <div class="c">resolve --comment RULE-0003</div>
+          <div class="c2">cost: this session $0.0000</div>
+        </div>
+      </div>
+
+      <audio id="music" src="assets/music/bed.mp3" data-start="0" data-duration="25" data-track-index="8" data-volume="1"></audio>
+      <audio id="sx1" src="assets/sfx/impactSoft_medium_001.wav" data-start="3.7" data-duration="0.5" data-track-index="9" data-volume="0.8"></audio>
+      <audio id="sx2" src="assets/sfx/click_003.wav" data-start="6.95" data-duration="0.3" data-track-index="10" data-volume="0.7"></audio>
+      <audio id="sx3" src="assets/sfx/click_003.wav" data-start="7.92" data-duration="0.3" data-track-index="11" data-volume="0.7"></audio>
+      <audio id="sx4" src="assets/sfx/click_003.wav" data-start="9.5" data-duration="0.3" data-track-index="12" data-volume="0.7"></audio>
+      <audio id="sx5" src="assets/sfx/bong_001.wav" data-start="19.48" data-duration="0.5" data-track-index="13" data-volume="0.7"></audio>
+      <audio id="sx6" src="assets/sfx/bong_001.wav" data-start="20.54" data-duration="0.5" data-track-index="14" data-volume="0.7"></audio>
+      <audio id="sx8" src="assets/sfx/impactSoft_medium_001.wav" data-start="22.64" data-duration="0.5" data-track-index="16" data-volume="0.8"></audio>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const up = (sel, at, d = 0.5) =>
+        tl.fromTo(sel, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: d, ease: "power3.out" }, at);
+      const type = (sel, at, n, d) =>
+        tl.fromTo(sel, { width: "0ch" }, { width: n + "ch", duration: d, ease: "steps(" + n + ")" }, at);
+      const pulse = (at, amt = 0.35) => {
+        tl.fromTo("#glow", { opacity: 0.5 }, { opacity: 0.5 + amt, duration: 0.12, ease: "power2.out" }, at);
+        tl.to("#glow", { opacity: 0.5, duration: 0.45, ease: "power2.in" }, at + 0.12);
+      };
+
+      // Scene 1 — hook: line 1 is on screen at frame 0 (thumbnail), line 2 lands on beat 1.07
+      up("#h2", 1.07);
+      tl.to(["#h1", "#h2"], { opacity: 0, duration: 0.2, ease: "power2.in" }, 3.4);
+
+      // Scene 2 — title, beat-locked to the 3.70 strong cue
+      tl.fromTo("#title", { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power4.out" }, 3.7); // beat-locked
+      pulse(3.7, 0.5);
+      tl.fromTo("#rule", { width: 0 }, { width: 720, duration: 0.5, ease: "power3.out" }, 4.23);
+      up("#tag", 4.23);
+      tl.to(["#title", "#rule", "#tag"], { opacity: 0, duration: 0.25, ease: "power2.in" }, 6.75);
+
+      // Scene 3 — terminal (beat grid 7.40 / 8.96 / 10.54 / 11.06 / 12.65)
+      type("#t1", 6.95, 37, 0.42);
+      tl.fromTo("#o1", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 7.4); // beat-grid
+      type("#t2", 7.92, 38, 0.9);
+      tl.fromTo("#o2", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 8.96); // beat-grid
+      type("#t3", 9.5, 50, 0.95);
+      tl.fromTo("#o3", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 10.54); // beat-grid
+      tl.fromTo("#o5", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 10.54); // beat-grid (with o3)
+      tl.fromTo("#cov", { backgroundColor: "rgba(94,234,212,0)" }, { backgroundColor: "rgba(94,234,212,0.35)", duration: 0.12 }, 12.55); // beat-locked 12.65
+      pulse(12.65, 0.45);
+
+      // Scene 4 — graph on consecutive beats from 13.70; evidence line at 15.28
+      tl.fromTo("#card", { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: 0.45, ease: "power3.out" }, 13.7);
+      const nodes = [["#n1", 13.7], ["#n2", 14.22], ["#n3", 14.76], ["#n4", 15.28], ["#n5", 15.81]]; // beat-grid
+      nodes.forEach(([s, t]) => tl.fromTo(s, { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(1.6)" }, t));
+      ["#e1", "#e2", "#e3", "#e4"].forEach((s, i) =>
+        tl.fromTo(s, { opacity: 0 }, { opacity: 1, duration: 0.3 }, 14.22 + i * 0.526));
+      tl.fromTo("#ev", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 15.28); // beat-grid
+      pulse(15.81, 0.25);
+
+      // Scene 5 — the catch (beats 17.91, 18.44; chips 19.48, 20.54)
+      tl.fromTo("#p1", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 17.91); // beat-grid
+      tl.fromTo("#p2", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 18.44); // beat-grid
+      tl.fromTo("#c1", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 19.48); // beat-grid
+      tl.fromTo("#c2", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 20.54); // beat-grid
+      pulse(19.48, 0.3);
+
+      // Scene 6 — end card on beat 22.64
+      tl.fromTo("#end", { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: 0.4, ease: "power4.out" }, 22.64); // beat-grid
+      pulse(22.64, 0.5);
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
