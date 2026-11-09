@@ -144,8 +144,9 @@ def dedupe_fact_endpoints(graph: Graph) -> Graph:
         method, _, path = n.qualified_symbol.partition(" ")
         return method, path
 
-    stubs = [n for n in graph.nodes if n.type == "endpoint" and "@" in n.qualified_symbol]
-    full = [n for n in graph.nodes if n.type == "endpoint" and "@" not in n.qualified_symbol]
+    is_stub = lambda n: n.responsibility.startswith("(facts only")
+    stubs = [n for n in graph.nodes if n.type == "endpoint" and is_stub(n)]
+    full = [n for n in graph.nodes if n.type == "endpoint" and not is_stub(n)]
     remap: dict[str, str] = {}
     for st in stubs:
         method, spath = split(st)
@@ -174,4 +175,38 @@ def dedupe_fact_endpoints(graph: Graph) -> Graph:
         if k not in seen and e2.source != e2.target:
             seen.add(k)
             edges.append(e2)
+    return Graph(version=graph.version, nodes=nodes, edges=edges)
+
+
+def collapse_entity_components(graph: Graph) -> Graph:
+    """A file that defines a data entity is that entity, not a separate component: merge the file's
+    component node into the (first) entity node, keeping its inventory refs, and re-point edges
+    (calls touching an entity become depends_on; duplicates and self-loops are dropped)."""
+    ent_by_mod: dict[str, Node] = {}
+    for n in sorted(graph.nodes, key=lambda x: x.id):
+        if n.type == "data_entity" and n.module:
+            ent_by_mod.setdefault(n.module, n)
+    remap = {n.id: ent_by_mod[n.module].id for n in graph.nodes
+             if n.type == "component" and n.module in ent_by_mod}
+    if not remap:
+        return graph
+    by_id = {n.id: n for n in graph.nodes}
+    nodes = []
+    for n in graph.nodes:
+        if n.id in remap:
+            continue
+        extra = [r for old, new in remap.items() if new == n.id for r in by_id[old].inventory_refs]
+        nodes.append(n.model_copy(update={"inventory_refs": sorted(set(n.inventory_refs) | set(extra))}) if extra else n)
+    ent_ids = {n.id for n in nodes if n.type == "data_entity"}
+    seen, edges = {}, []
+    for e in graph.edges:
+        src, tgt = remap.get(e.source, e.source), remap.get(e.target, e.target)
+        typ = "depends_on" if e.type == "calls" and (src in ent_ids or tgt in ent_ids) else e.type
+        if src == tgt:
+            continue
+        k = (src, typ, tgt)
+        if k in seen:
+            continue
+        seen[k] = True
+        edges.append(e.model_copy(update={"source": src, "target": tgt, "type": typ}))
     return Graph(version=graph.version, nodes=nodes, edges=edges)

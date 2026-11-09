@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from ..analyze.chunker import LINE_FMT
 from ..analyze.coverage import check_coverage
 from ..analyze.evidence import verify_evidence
-from ..analyze.merger import dedupe_fact_endpoints, merge_patches
+from ..analyze.merger import collapse_entity_components, dedupe_fact_endpoints, merge_patches
 from ..analyze.module_analyzer import load_prompt, render, run_patch_task
 from ..audit import AuditLog
 from ..extract.treesitter import AstFacts
@@ -162,7 +162,7 @@ def reanalyze(project: Project, llm: LLMClient, *, margin: int = MARGIN) -> Rean
         n.model_copy(update={"responsibility": ""}) if (n.type, n.module, n.qualified_symbol) in reemitted else n
         for n in old.nodes]})
     res = merge_patches(patches, reg, base=base)
-    graph = verify_evidence(dedupe_fact_endpoints(res.graph), project.code).graph
+    graph = verify_evidence(collapse_entity_components(dedupe_fact_endpoints(res.graph)), project.code).graph
     reg.save()
     save_snapshot(project.graph_dir, graph)
     new = load_latest(project.graph_dir)

@@ -44,6 +44,17 @@ def _fill_ref(ref):
     return ref
 
 
+def _fix_evidence(item):
+    """Tolerate evidence given as a single object (or null) instead of a list."""
+    if isinstance(item, dict) and "evidence" in item:
+        ev = item["evidence"]
+        if isinstance(ev, dict):
+            item = {**item, "evidence": [ev]}
+        elif ev is None:
+            item = {**item, "evidence": []}
+    return item
+
+
 def sanitize_patch(data, chunk_id: str, node_types=NODE_TYPES) -> dict:
     """Drop nodes/edges/unresolved with invalid types; force chunk_id."""
     if not isinstance(data, dict):
@@ -54,6 +65,9 @@ def sanitize_patch(data, chunk_id: str, node_types=NODE_TYPES) -> dict:
     fix_e = lambda e: {**e, "source": _fill_ref(e.get("source")), "target": _fill_ref(e.get("target"))} if isinstance(e, dict) else e
     fix_u = lambda u: {**u, "from_node": _fill_ref(u.get("from_node"))} if isinstance(u, dict) else u
     data = {**data, "edges": [fix_e(e) for e in (data.get("edges") or [])], "unresolved": [fix_u(u) for u in (data.get("unresolved") or [])]}
+    out["nodes"] = [_fix_evidence(n) for n in out["nodes"]]
+    data = {**data, "edges": [_fix_evidence(e) for e in data["edges"]],
+            "unresolved": [_fix_evidence(u) for u in data["unresolved"]]}
     out["edges"] = [e for e in (data.get("edges") or [])
                     if isinstance(e, dict) and e.get("type") in EDGE_TYPES
                     and _ref_ok(e.get("source")) and _ref_ok(e.get("target"))]

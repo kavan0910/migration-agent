@@ -20,8 +20,8 @@ from .coverage import check_coverage
 from .crossref import resolve_cross_refs
 from .evidence import verify_evidence
 from .gapfill import fill_gaps
-from .merger import Checkpoint, merge_patches, dedupe_fact_endpoints
-from .module_analyzer import analyze_chunk
+from .merger import Checkpoint, merge_patches, dedupe_fact_endpoints, collapse_entity_components
+from .module_analyzer import AnalysisError, analyze_chunk
 from .patch import ChunkPatch
 from .rules import extract_rules
 
@@ -58,8 +58,16 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
             text = render_chunk_text(proj.code, c)
             facts = ", ".join(c.files)
             try:
-                p1 = analyze_chunk(llm, c.id, text, facts, _summary(base))
-                p2 = extract_rules(llm, c.id, text, _summary(base))
+                try:
+                    p1 = analyze_chunk(llm, c.id, text, facts, _summary(base))
+                except AnalysisError as e:
+                    log(f"{c.id}: chunk_extract skipped ({str(e)[:160]})")
+                    p1 = ChunkPatch(chunk_id=c.id)
+                try:
+                    p2 = extract_rules(llm, c.id, text, _summary(base))
+                except AnalysisError as e:
+                    log(f"{c.id}: business_rules skipped ({str(e)[:160]})")
+                    p2 = ChunkPatch(chunk_id=c.id)
             except BudgetExceeded as e:
                 stopped = str(e)
                 log(f"budget reached at {c.id}: {e}")
@@ -74,7 +82,7 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
             xp = resolve_cross_refs(llm, graph, res.unresolved, tools)
             res = merge_patches(ckpt.load_patches() + [xp], reg, base=base)
             graph = res.graph
-    graph = dedupe_fact_endpoints(graph)
+    graph = collapse_entity_components(dedupe_fact_endpoints(graph))
     ver = verify_evidence(graph, proj.code)
     graph = ver.graph
     cov = check_coverage(inv, graph)
@@ -82,7 +90,7 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
         with audit.span("analyst", "gap_fill"):
             gf = fill_gaps(llm, cov, graph, tools)
         res = merge_patches(ckpt.load_patches() + [gf.patch], reg, base=base)
-        graph = verify_evidence(dedupe_fact_endpoints(res.graph), proj.code).graph
+        graph = verify_evidence(collapse_entity_components(dedupe_fact_endpoints(res.graph)), proj.code).graph
         cov = check_coverage(inv, graph, {k: v["reason"] for k, v in gf.classified.items() if v.get("status") == "excluded"})
     reg.save()
     save_snapshot(proj.graph_dir, graph)

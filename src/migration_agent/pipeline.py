@@ -92,11 +92,13 @@ def build_fact_graph(proj: Project) -> Graph:
     reg = Registry(proj.graph_dir / "registry.json")
     spec = {"source_file": "component", "route": "endpoint", "dependency": "external_dependency", "config_key": "config"}
     nodes: dict[tuple, Node] = {}
+    from collections import Counter
+    dup = Counter((it.kind, it.file, it.name) for it in inv.items)
     for it in inv.items:
         t = spec[it.kind]
         module = it.file or ""
         sym = it.name if t != "component" else it.file
-        key = (t, module, f"{sym}@{it.line}" if t in ("endpoint", "config") else sym)
+        key = (t, module, f"{sym}@{it.line}" if t in ("endpoint", "config") and dup[(it.kind, it.file, it.name)] > 1 else sym)
         ev = [Evidence(file=it.file, line_start=it.line, line_end=it.line)] if it.file else []
         if key in nodes:
             nodes[key].inventory_refs.append(it.id)
@@ -106,8 +108,15 @@ def build_fact_graph(proj: Project) -> Graph:
     ids = reg.allocate_nodes(list(nodes))
     for k, n in nodes.items():
         n.id = ids[k]
+    from .extract.deps import extract_deps
+    from .graph.models import Edge
+    comp_id = {n.module: n.id for n in nodes.values() if n.type == "component"}
+    deps = [(s, d, ln) for s, d, ln in extract_deps(proj.code, list(comp_id)) if s in comp_id and d in comp_id]
+    eids = reg.allocate_edges([(comp_id[s], "calls", comp_id[d]) for s, d, _ in deps])
+    edges = [Edge(id=eids[(comp_id[s], "calls", comp_id[d])], source=comp_id[s], target=comp_id[d], type="calls",
+                  evidence=[Evidence(file=s, line_start=ln, line_end=ln)]) for s, d, ln in deps]
     reg.save()
-    return Graph(nodes=sorted(nodes.values(), key=lambda n: n.id))
+    return Graph(nodes=sorted(nodes.values(), key=lambda n: n.id), edges=sorted(edges, key=lambda e: e.id))
 
 
 def render_doc(proj: Project, graph: Graph, inv: Inventory) -> Path:
