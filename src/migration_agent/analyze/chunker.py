@@ -99,14 +99,18 @@ def _split_file(ff: FileFacts, lines: list[str], pre: list[int], budget: int) ->
     return out
 
 
-@dataclass
 class _Unit:
-    module: str
-    segs: list[_Seg]
+    """A group of segments; cost is cached and merging extends in place (no O(n^2) list copies)."""
+    __slots__ = ("module", "segs", "cost")
 
-    @property
-    def cost(self) -> int:
-        return sum(s.cost for s in self.segs)
+    def __init__(self, module: str, segs: list[_Seg], cost: int | None = None):
+        self.module = module
+        self.segs = segs
+        self.cost = sum(s.cost for s in segs) if cost is None else cost
+
+    def absorb(self, other: "_Unit") -> None:
+        self.segs.extend(other.segs)
+        self.cost += other.cost
 
 
 def _dir_of(path: str) -> str:
@@ -114,8 +118,39 @@ def _dir_of(path: str) -> str:
     return d
 
 
+def _file_rank(paths: list[str], fdeps: dict[str, set[str]]) -> dict[str, int]:
+    """Deterministic dependency-first rank of files (SCC condensation, Kahn with path-order tie-break), so that
+    files packed next to each other in a directory follow import order: deep chains stay contiguous."""
+    idx = {p: i for i, p in enumerate(paths)}
+    adj = {idx[p]: sorted(idx[d] for d in fdeps.get(p, ()) if d in idx) for p in paths}
+    comps = _scc(list(range(len(paths))), adj)
+    comp_of = {v: ci for ci, c in enumerate(comps) for v in c}
+    need: dict[int, set[int]] = defaultdict(set)
+    rev: dict[int, set[int]] = defaultdict(set)
+    for i, js in adj.items():
+        for j in js:
+            if comp_of[i] != comp_of[j]:
+                need[comp_of[i]].add(comp_of[j])
+                rev[comp_of[j]].add(comp_of[i])
+    remaining = {c: len(need.get(c, ())) for c in range(len(comps))}
+    heap = [(comps[c][0], c) for c in remaining if remaining[c] == 0]
+    heapq.heapify(heap)
+    rank: dict[str, int] = {}
+    while heap:
+        _, c = heapq.heappop(heap)
+        for v in comps[c]:
+            rank[paths[v]] = len(rank)
+        for r in rev.get(c, ()):
+            remaining[r] -= 1
+            if remaining[r] == 0:
+                heapq.heappush(heap, (comps[r][0], r))
+    for p in paths:  # (unreachable with a proper condensation, kept as a safety net)
+        rank.setdefault(p, len(rank))
+    return rank
+
+
 def _plan_dir(d: str, files_by_dir: dict[str, list[str]], subdirs: dict[str, list[str]],
-              segs_of: dict[str, list[_Seg]], budget: int) -> list[_Unit]:
+              segs_of: dict[str, list[_Seg]], budget: int, rank: dict[str, int] | None = None) -> list[_Unit]:
     def subtree_files(x: str) -> list[str]:
         out = list(files_by_dir.get(x, []))
         for s in subdirs.get(x, []):
@@ -127,18 +162,19 @@ def _plan_dir(d: str, files_by_dir: dict[str, list[str]], subdirs: dict[str, lis
     if total <= budget and all(not segs_of[f][0].partial for f in all_files):
         return [_Unit(d, [s for f in sorted(all_files) for s in segs_of[f]])]
     items: list[_Unit] = []
-    for f in sorted(files_by_dir.get(d, [])):
+    order = (lambda f: (rank[f], f)) if rank else (lambda f: f)
+    for f in sorted(files_by_dir.get(d, []), key=order):
         for s in segs_of[f]:
             items.append(_Unit(d, [s]))
     for sd in sorted(subdirs.get(d, [])):
-        items += _plan_dir(sd, files_by_dir, subdirs, segs_of, budget)
+        items += _plan_dir(sd, files_by_dir, subdirs, segs_of, budget, rank)
     # pack adjacent units of the same module greedily (never across directories)
     packed: list[_Unit] = []
     for u in items:
         if packed and packed[-1].module == u.module and packed[-1].cost + u.cost <= budget:
-            packed[-1] = _Unit(u.module, packed[-1].segs + u.segs)
+            packed[-1].absorb(u)
         else:
-            packed.append(u)
+            packed.append(_Unit(u.module, list(u.segs), u.cost))
     return packed
 
 
@@ -180,11 +216,31 @@ def _resolve_imports(code_dir: Path, ast: AstFacts, paths: set[str]) -> dict[str
         elif pp.suffix == ".go":
             go_dirs[str(pp.parent)].append(p)
 
+    def _suffix_index(table: dict[str, str]) -> dict[str, list[str]]:
+        idx: dict[str, list[str]] = defaultdict(list)
+        for k, v in table.items():
+            parts = k.split(".")
+            for i in range(1, len(parts)):  # proper dotted suffixes only
+                idx[".".join(parts[i:])].append(v)
+        return idx
+
+    sfx: dict[int, dict[str, list[str]]] = {}
+
     def suffix_lookup(table: dict[str, str], name: str) -> str | None:
         if name in table:
             return table[name]
-        hits = [v for k, v in table.items() if k.endswith("." + name)]
+        idx = sfx.get(id(table))
+        if idx is None:
+            idx = sfx[id(table)] = _suffix_index(table)
+        hits = idx.get(name, ())
         return hits[0] if len(hits) == 1 else None
+
+    java_pkg_idx: dict[str, list[str]] = defaultdict(list)  # package dotted-suffix -> files
+    for k, v in java_mod.items():
+        if "." in k:
+            parts = k.rsplit(".", 1)[0].split(".")
+            for i in range(len(parts)):
+                java_pkg_idx[".".join(parts[i:])].append(v)
 
     def js_resolve(base_dir: str, spec: str) -> str | None:
         n = _norm(f"{base_dir}/{spec}" if base_dir != "." else spec)
@@ -247,8 +303,7 @@ def _resolve_imports(code_dir: Path, ast: AstFacts, paths: set[str]) -> dict[str
                     continue
                 name, wild = m.group(1), m.group(2)
                 if wild:
-                    found.update(v for k, v in java_mod.items()
-                                 if k.rsplit(".", 1)[0].endswith(name) and k != name)
+                    found.update(v for v in java_pkg_idx.get(name, ()) if v != java_mod.get(name))
                     continue
                 parts = name.split(".")
                 for i in range(len(parts), 0, -1):  # trim static member names
@@ -364,25 +419,48 @@ def plan_chunks(code_dir: Path, ast: AstFacts, *, context_tokens: int = 200_000,
             subdirs[parent].add(d)
             d = parent
     sub = {k: sorted(v) for k, v in subdirs.items()}
-    units = _plan_dir(".", files_by_dir, sub, segs_of, budget) if facts else []
+    fdeps = _resolve_imports(code_dir, ast, set(facts))
+    rank = _file_rank(sorted(facts), fdeps) if facts else {}
+    units = _plan_dir(".", files_by_dir, sub, segs_of, budget, rank) if facts else []
 
     # provisional chunks
-    keyed = sorted(units, key=lambda u: (u.segs[0].path, u.segs[0].a))
-    file_to_units: dict[str, set[int]] = defaultdict(set)
-    for i, u in enumerate(keyed):
-        for s in u.segs:
-            file_to_units[s.path].add(i)
-    fdeps = _resolve_imports(code_dir, ast, set(facts))
-    adj_set: dict[int, set[int]] = defaultdict(set)  # i depends on j
-    for i, u in enumerate(keyed):
-        for s in u.segs:
-            for dep in fdeps.get(s.path, ()):
-                for j in file_to_units.get(dep, ()):
-                    if j != i:
-                        adj_set[i].add(j)
-    adj = {i: sorted(v) for i, v in adj_set.items()}
 
-    comps = _scc(list(range(len(keyed))), adj)
+    def build(units: list[_Unit]):
+        keyed = sorted(units, key=lambda u: (rank.get(u.segs[0].path, 0), u.segs[0].path, u.segs[0].a))
+        file_to_units: dict[str, set[int]] = defaultdict(set)
+        for i, u in enumerate(keyed):
+            for s in u.segs:
+                file_to_units[s.path].add(i)
+        adj_set: dict[int, set[int]] = defaultdict(set)  # i depends on j
+        for i, u in enumerate(keyed):
+            for s in u.segs:
+                for dep in fdeps.get(s.path, ()):
+                    for j in file_to_units.get(dep, ()):
+                        if j != i:
+                            adj_set[i].add(j)
+        adj = {i: sorted(v) for i, v in adj_set.items()}
+        return keyed, adj, _scc(list(range(len(keyed))), adj)
+
+    keyed, adj, comps = build(units)
+    # strongly connected units (import cycles) are analysed together when they fit the budget
+    merged_any = False
+    out_units: list[_Unit] = []
+    for c in comps:
+        us = [keyed[i] for i in c]
+        if len(us) > 1 and sum(u.cost for u in us) <= budget:
+            mods = [u.module.split("/") for u in us]
+            common = []
+            for parts in zip(*mods):
+                if len(set(parts)) != 1:
+                    break
+                common.append(parts[0])
+            segs = [s for u in us for s in u.segs]
+            out_units.append(_Unit("/".join(common) or ".", segs, sum(u.cost for u in us)))
+            merged_any = True
+        else:
+            out_units.extend(us)
+    if merged_any:
+        keyed, adj, comps = build(out_units)
     comp_of = {v: ci for ci, c in enumerate(comps) for v in c}
     cdeps: dict[int, set[int]] = defaultdict(set)
     rdeps: dict[int, set[int]] = defaultdict(set)

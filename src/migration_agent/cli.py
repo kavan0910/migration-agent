@@ -8,10 +8,33 @@ from .project import Project
 
 
 @click.group()
+@click.version_option(package_name="migration-agent")
 def main() -> None:
     """Read-only legacy service analysis."""
+    from .config_env import configure_logging
     from .dotenv import load_dotenv, project_root
     load_dotenv(project_root() / ".env")
+    configure_logging()
+
+
+def _load_cfg(config_path):
+    """LLM config: --config file wins, otherwise defaults overlaid with MA_* environment variables."""
+    from .config_env import EnvConfigError, load_llm_config_from_env
+    from .llm.litellm_client import LLMConfig
+    try:
+        return LLMConfig.load(config_path) if config_path else load_llm_config_from_env()
+    except EnvConfigError as e:
+        raise click.ClickException(str(e))
+
+
+def _budget(max_usd):
+    from .config_env import EnvConfigError, load_settings_from_env
+    if max_usd is not None:
+        return max_usd
+    try:
+        return load_settings_from_env().max_usd
+    except EnvConfigError as e:
+        raise click.ClickException(str(e))
 
 
 @main.command()
@@ -32,11 +55,17 @@ def _proj(path: Path) -> Project:
 
 @main.command()
 @click.argument("project", type=click.Path(exists=True, path_type=Path))
-def ingest_cmd(project: Path) -> None:
+@click.option("--refresh", is_flag=True, help="Replace the existing code/ copy with a fresh ingest of the source "
+                                              "(use before `analyze --incremental` after the source changed).")
+def ingest_cmd(project: Path, refresh: bool) -> None:
     """Copy the project's source into code/ (path, zip, tarball or git URL)."""
+    import shutil
     from .audit import AuditLog
     from .pipeline import run_ingest
     p = _proj(project)
+    if refresh and p.code.exists():
+        for child in p.code.iterdir():  # code/ is the tool's own copy, never the user's original
+            shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
     with AuditLog(p.audit_dir / "audit.jsonl").span("cli", "ingest"):
         r = run_ingest(p, p.meta().source)
     click.echo(f"ingested {r.files_copied} files, skipped {r.files_skipped}, secret findings {len(r.secret_findings)}")
@@ -85,7 +114,12 @@ def audit(project: Path, fmt: str) -> None:
 @click.option("--config", "config_path", type=click.Path(exists=True, path_type=Path), default=None, help="LLM config.json")
 @click.option("--max-usd", type=float, default=None, help="Hard budget; the run stops gracefully when reached.")
 @click.option("--dry-run", is_flag=True, help="Only print the chunk plan and cost estimate.")
-def analyze(project: Path, offline: bool, config_path: Path | None, max_usd: float | None, dry_run: bool) -> None:
+@click.option("--incremental", is_flag=True,
+              help="After re-ingesting updated source: re-analyse only changed chunks and their dependents (file-hash invalidation); IDs stay stable.")
+@click.option("--workers", type=click.IntRange(min=1), default=1, show_default=True,
+              help="Parallel chunk calls (dependency-aware; merge order stays deterministic).")
+def analyze(project: Path, offline: bool, config_path: Path | None, max_usd: float | None, dry_run: bool,
+            incremental: bool, workers: int) -> None:
     """Analyze the service: extract -> LLM analysis -> merge -> verify -> render doc and graph."""
     from .analyze.runner import estimate, run_analyze
     from .audit import AuditLog
@@ -96,17 +130,26 @@ def analyze(project: Path, offline: bool, config_path: Path | None, max_usd: flo
     if not offline and not dry_run and not any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY")):
         raise click.ClickException("No LLM API key found. Add `ANTHROPIC_API_KEY=...` (or GEMINI_API_KEY) to the .env file in the migration-agent project root (see .env.example), or use --offline.")
     p = _proj(project)
-    if not p.inventory_path.exists():
-        run_extract(p)
-    cfg = LLMConfig.load(config_path) if config_path else LLMConfig()
-    n, usd = estimate(p, cfg)
-    click.echo(f"plan: {n} chunk(s), estimated cost ${usd:.2f}" + (" (offline: no cost)" if offline else ""))
+    if incremental or not p.inventory_path.exists():
+        run_extract(p)  # incremental: facts must reflect the re-ingested source (no LLM involved)
+    cfg = _load_cfg(config_path)
+    max_usd = _budget(max_usd)
+    n, usd = estimate(p, cfg, incremental=incremental)
+    click.echo(f"plan: {n} chunk(s), estimated cost ${usd:.2f}" + (" (offline: no cost)" if offline else "")
+               + (" [incremental: pending chunks only]" if incremental else ""))
+    if max_usd is not None and usd > max_usd and not offline:
+        click.echo(f"warning: estimate ${usd:.2f} exceeds --max-usd ${max_usd:.2f}; the run will stop gracefully with partial results")
     if dry_run:
         return
     audit_log = AuditLog(p.audit_dir / "audit.jsonl")
     llm = OfflineLLM() if offline else LiteLLMClient(cfg, budget=Budget(max_usd=max_usd), cache_dir=p.root / "llm_cache", audit=audit_log)
-    out = run_analyze(p, llm, log=click.echo)
+    out = run_analyze(p, llm, log=click.echo, incremental=incremental, workers=workers, max_usd=max_usd)
     click.echo(f"done: {out}")
+    if out.get("failed_chunks") or out.get("failed_tasks"):
+        click.echo(f"warning: {out['failed_chunks']} chunk(s) failed ({', '.join(out['failed'] + out['failed_tasks'])}); "
+                   f"partial results were rendered. Re-run `analyze` to retry only the failed/unfinished chunks "
+                   f"(details: checkpoint/failures.json).")
+    click.echo(f"cost: this session ${out['session_cost_usd']:.4f}, project total ${out['total_cost_usd']:.4f} (audit/cost_total.json)")
     click.echo(f"doc:   {p.docs / 'understanding.latest.md'}\ngraph: {p.docs / 'graph.html'}")
 
 
@@ -116,8 +159,8 @@ def _llm(p, config_path, max_usd):
     from .llm.litellm_client import Budget, LiteLLMClient, LLMConfig
     if not any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY")):
         raise click.ClickException("No LLM API key found. Add it to the .env file in the migration-agent project root (see .env.example).")
-    cfg = LLMConfig.load(config_path) if config_path else LLMConfig()
-    return LiteLLMClient(cfg, budget=Budget(max_usd=max_usd), cache_dir=p.root / "llm_cache",
+    cfg = _load_cfg(config_path)
+    return LiteLLMClient(cfg, budget=Budget(max_usd=_budget(max_usd)), cache_dir=p.root / "llm_cache",
                          audit=AuditLog(p.audit_dir / "audit.jsonl"))
 
 

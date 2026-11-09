@@ -69,6 +69,20 @@ class Registry:
             self._alloc(edge_key(*k))
         return {k: self.entries[edge_key(*k)] for k in keys}
 
+    def adopt_edge(self, source: str, type: str, target: str, edge_id: str) -> None:
+        """Make (source, type, target) -> edge_id authoritative, as saved in a graph (e.g. after nodes were
+        collapsed and an edge re-pointed), so later merges keep that ID. Any other key bound to the same
+        ID, and any other ID previously bound to this key, is dropped (IDs are never reused)."""
+        key = edge_key(source, type, target)
+        if self.entries.get(key) == edge_id:
+            return
+        for k in [k for k, v in self.entries.items() if v == edge_id]:
+            del self.entries[k]
+        self.entries[key] = edge_id
+        num = edge_id.rpartition("-")[2]
+        if num.isdigit():
+            self.counters[EDGE_PREFIX] = max(self.counters.get(EDGE_PREFIX, 0), int(num))
+
     def lookup(self, key: str) -> str | None:
         return self.entries.get(key)
 

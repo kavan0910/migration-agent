@@ -10,7 +10,7 @@ from ..analyze.chunker import LINE_FMT
 from ..analyze.coverage import check_coverage
 from ..analyze.evidence import verify_evidence
 from ..analyze.merger import collapse_entity_components, dedupe_fact_endpoints, merge_patches
-from ..analyze.module_analyzer import load_prompt, render, run_patch_task
+from ..analyze.module_analyzer import load_prompt, neutralize, render, run_patch_task
 from ..audit import AuditLog
 from ..extract.treesitter import AstFacts
 from ..graph import Registry, diff_graphs, load_latest, save_snapshot
@@ -88,7 +88,8 @@ def _regions(node: Node, tools: ReadOnlyTools, margin: int) -> str:
 
 
 def _defang(text: str) -> str:
-    return text.replace("<<<", "<<").replace(">>>", ">>")
+    # also handles fullwidth/zero-width/bidi look-alikes of the <<<MARKER>>> delimiters
+    return neutralize(text).replace("<<<", "<<").replace(">>>", ">>")
 
 
 def _collect(project: Project) -> tuple[dict[str, list[dict]], list[str], list[str]]:

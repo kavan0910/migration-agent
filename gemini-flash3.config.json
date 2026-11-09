@@ -1,0 +1,26 @@
+{
+ "llm": {
+  "models": {
+   "chunk_extract": "gemini/gemini-3-flash-preview",
+   "cross_ref": "gemini/gemini-3-flash-preview",
+   "business_rules": "gemini/gemini-3-flash-preview",
+   "gap_fill": "gemini/gemini-3-flash-preview",
+   "verifier": "gemini/gemini-3-flash-preview"
+  },
+  "default_model": "gemini/gemini-3-flash-preview",
+  "pricing": {
+   "gemini-3-flash-preview": [
+    0.3,
+    2.5
+   ]
+  },
+  "default_pricing": [
+   0.3,
+   2.5
+  ],
+  "max_output_tokens": 8192,
+  "max_retries": 8,
+  "backoff_base": 5.0,
+  "backoff_max": 90.0
+ }
+}

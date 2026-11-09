@@ -12,6 +12,9 @@ from pydantic import BaseModel, ValidationError
 from .models import Graph
 
 
+COMPACT_ABOVE = 5000  # nodes+edges; larger snapshots are written without indentation (size/speed)
+
+
 class GraphStoreError(Exception):
     pass
 
@@ -51,7 +54,8 @@ def _dump(graph: Graph) -> str:
         raw["confidence"] = n.confidence
     for raw, e in zip(d["edges"], graph.edges):
         raw["confidence"] = e.confidence
-    return json.dumps(d, indent=2) + "\n"
+    big = len(d["nodes"]) + len(d["edges"]) > COMPACT_ABOVE
+    return (json.dumps(d, separators=(",", ":")) if big else json.dumps(d, indent=2)) + "\n"
 
 
 def parse_graph(text: str) -> Graph:

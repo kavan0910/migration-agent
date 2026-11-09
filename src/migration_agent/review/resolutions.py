@@ -1,6 +1,7 @@
 """C-03 resolution engine: feedback/resolutions.json (one resolution per finding)."""
 from __future__ import annotations
 
+from ..ingest.secrets import redact_string
 from ..project import Project
 from ..verify.models import FindingsFile, Resolution, ResolutionsFile, ResolutionStatus
 from ._io import ReviewError, atomic_write, now_iso
@@ -34,7 +35,7 @@ def add_resolution(project: Project, finding_id: str, status: ResolutionStatus, 
     finding = next((f for f in load_findings(project).findings if f.id == finding_id), None)
     if finding is None:
         raise ReviewError(f"unknown finding: {finding_id}")
-    res = Resolution(finding_id=finding_id, status=status, note=note,
+    res = Resolution(finding_id=finding_id, status=status, note=redact_string(note),
                      affected_node_ids=list(dict.fromkeys(finding.item_ids)), created=now_iso())
     rf = load_resolutions(project)
     kept = [r for r in rf.resolutions if r.finding_id != finding_id]

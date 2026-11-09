@@ -1,0 +1,17 @@
+{
+  "dropped": 2,
+  "kinds": [
+    [
+      "contradiction",
+      "high"
+    ],
+    [
+      "doc_only",
+      "medium"
+    ],
+    [
+      "code_only",
+      "low"
+    ]
+  ]
+}

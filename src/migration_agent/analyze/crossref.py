@@ -25,7 +25,8 @@ SYSTEM = (
 
 
 def fence(text: str) -> str:
-    safe = text.replace("DATA>>>", "DATA> >>").replace("<<<DATA", "<< <DATA")
+    from .module_analyzer import neutralize
+    safe = neutralize(text).replace("DATA>>>", "DATA> >>").replace("<<<DATA", "<< <DATA")
     return f"<<<DATA\n{safe}\nDATA>>>"
 
 

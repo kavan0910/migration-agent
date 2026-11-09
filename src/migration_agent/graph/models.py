@@ -106,15 +106,14 @@ class Graph(_Strict):
 
     @model_validator(mode="after")
     def _integrity(self):
+        from collections import Counter
         ids = [n.id for n in self.nodes]
-        dup = {i for i in ids if ids.count(i) > 1}
-        if dup:
-            raise ValueError(f"duplicate node ids: {sorted(dup)}")
-        eids = [e.id for e in self.edges]
-        edup = {i for i in eids if eids.count(i) > 1}
-        if edup:
-            raise ValueError(f"duplicate edge ids: {sorted(edup)}")
         known = set(ids)
+        if len(known) != len(ids):  # O(n): Counter, not repeated list.count
+            raise ValueError(f"duplicate node ids: {sorted(i for i, c in Counter(ids).items() if c > 1)}")
+        eids = [e.id for e in self.edges]
+        if len(set(eids)) != len(eids):
+            raise ValueError(f"duplicate edge ids: {sorted(i for i, c in Counter(eids).items() if c > 1)}")
         for e in self.edges:
             for end in (e.source, e.target):
                 if end not in known:

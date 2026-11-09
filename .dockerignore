@@ -1,0 +1,20 @@
+# Keep the build context minimal and free of secrets.
+.git
+.github
+.venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.pyc
+.pytest_cache
+*.egg-info
+dist
+build
+*.migration
+tests
+eval
+docs
+docker
+scripts
+.DS_Store

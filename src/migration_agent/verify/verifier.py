@@ -10,7 +10,8 @@ import re
 import tempfile
 from pathlib import Path
 
-from ..analyze.module_analyzer import load_prompt as _lp, render
+from ..analyze.module_analyzer import load_prompt as _lp, neutralize as _neutralize_text, render
+from ..ingest.secrets import redact_string
 from ..llm.base import LLMClient, parse_json
 from .models import Finding, FindingsFile, Quote
 from .userdocs import UserDoc, load_user_docs
@@ -34,7 +35,7 @@ def _norm(s: str) -> str:
 
 def _neutralize(text: str) -> str:
     """Stop doc text from forging our delimiters."""
-    return re.sub(r"<<<([A-Z_]+)>>>", r"<<\1>>", text)
+    return _neutralize_text(re.sub(r"<<<([A-Za-z_]+)>>>", r"<<\1>>", text))
 
 
 def verify_quote(quote: Quote, sources: dict[str, str]) -> bool:
@@ -93,7 +94,9 @@ def run_verifier(project, llm: LLMClient) -> FindingsFile:
     out_path = Path(project.root) / "feedback" / "findings.json"
     graph = _graph(project)
     gver = graph.version if graph is not None else 0
-    docs: list[UserDoc] = load_user_docs(project)
+    # user docs may paste credentials: redact before they reach a prompt, a quote or findings.json
+    docs: list[UserDoc] = [d.model_copy(update={"markdown": redact_string(d.markdown)})
+                           for d in load_user_docs(project)]
     understanding_path = Path(project.root) / "docs" / "understanding.latest.md"
     if not docs:
         log.info("verifier: no user documents in user_docs/ - nothing to compare against; "
@@ -103,7 +106,7 @@ def run_verifier(project, llm: LLMClient) -> FindingsFile:
         return res
     if not understanding_path.exists():
         raise FileNotFoundError(f"{understanding_path} missing; run the analysis/render first")
-    understanding = understanding_path.read_text(encoding="utf-8")
+    understanding = redact_string(understanding_path.read_text(encoding="utf-8"))
     sources = {UNDERSTANDING: understanding, **{d.path: d.markdown for d in docs}}
 
     claims = _claims(llm, UNDERSTANDING, understanding)

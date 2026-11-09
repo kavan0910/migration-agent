@@ -27,6 +27,19 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+class LLMError(RuntimeError):
+    """Base for provider-level failures raised by LLM clients (D-05)."""
+
+
+class QuotaExhausted(BudgetExceeded):
+    """Provider quota is exhausted for a long time (e.g. daily quota, retryDelay of hours): fail fast
+    instead of sleeping. Subclasses BudgetExceeded so runs stop gracefully with partial results."""
+
+
+class LLMAuthError(LLMError):
+    """401/403: credentials or permissions are wrong. Retrying (or continuing the run) cannot help."""
+
+
 class FakeLLM:
     """Deterministic test double. `responder(task, system, prompt) -> str` returns the raw text
     (usually JSON). Every call is recorded in `.calls` so tests can assert on prompts."""

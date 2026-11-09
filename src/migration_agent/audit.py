@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .ingest.secrets import redact_obj
+
 
 def _last_seq(fd: int) -> int:
     size = os.fstat(fd).st_size
@@ -79,6 +81,8 @@ class AuditLog:
             "trace_ref": trace_ref,
         }
         entry.update(extra)
+        # defense in depth: error messages / free-text fields must never carry credentials
+        entry = redact_obj(entry)
         with self._lock:
             fd = os.open(self.path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
             try:

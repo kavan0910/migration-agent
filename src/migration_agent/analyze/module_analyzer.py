@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import typing
 from pathlib import Path
 
@@ -25,10 +26,22 @@ def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
+# Trojan-Source / invisible characters: bidi overrides, isolates, zero-width, BOM.
+_INVISIBLE = re.compile("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u2028\u2029\ufeff\u00ad]")
+# <<<NAME>>> delimiter look-alikes, including fullwidth / guillemet-style angle brackets.
+_FORGED_DELIM = re.compile(r"[<\uff1c\u2039\u00ab\u3008\u2329]{3}\s*[A-Za-z_]+\s*[>\uff1e\u203a\u00bb\u3009\u232a]{3}")
+
+
+def neutralize(text: str) -> str:
+    """Make untrusted text unable to forge our <<<MARKER>>> delimiters or hide text with bidi tricks."""
+    text = _INVISIBLE.sub("", text)
+    return _FORGED_DELIM.sub(lambda m: "<<" + re.sub(r"[^A-Za-z_]", "", m.group(0)) + ">>", text)
+
+
 def render(template: str, **values: str) -> str:
-    for k, v in values.items():
-        template = template.replace("{{" + k + "}}", v)
-    return template
+    """Single-pass substitution of {{KEY}}; substituted values are neutralised and never re-expanded."""
+    vals = {k: neutralize(str(v)) for k, v in values.items()}
+    return re.sub(r"\{\{(\w+)\}\}", lambda m: vals.get(m.group(1), m.group(0)), template)
 
 
 def _ref_ok(ref, node_types=NODE_TYPES) -> bool:

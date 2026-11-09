@@ -1,0 +1,8 @@
+swagger: "2.0"
+basePath: /v2
+paths:
+  /store/order:
+    post:
+      operationId: placeOrder
+  /store/inventory:
+    get: {}

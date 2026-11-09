@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "calls",
+            "reads",
+            "writes",
+            "depends_on",
+            "publishes",
+            "consumes",
+            "implements",
+            "configures"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "target",
+        "type"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "line_end": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line End"
+        },
+        "line_start": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Start"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "inventory_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Inventory Refs",
+          "type": "array"
+        },
+        "module": {
+          "default": "",
+          "title": "Module",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "qualified_symbol": {
+          "default": "",
+          "title": "Qualified Symbol",
+          "type": "string"
+        },
+        "quirk": {
+          "default": false,
+          "title": "Quirk",
+          "type": "boolean"
+        },
+        "responsibility": {
+          "default": "",
+          "title": "Responsibility",
+          "type": "string"
+        },
+        "suspected_bug": {
+          "default": false,
+          "title": "Suspected Bug",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "component",
+            "endpoint",
+            "data_entity",
+            "external_dependency",
+            "business_rule",
+            "config",
+            "job",
+            "integration",
+            "dead_code"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "title": "Node",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/Node"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "version": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "title": "Graph",
+  "type": "object"
+}

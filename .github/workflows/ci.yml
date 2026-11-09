@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev,llm]" build
+      - run: python -m pytest -q
+      - name: Build sdist + wheel and verify package data
+        run: |
+          python -m build --outdir dist .
+          python - <<'PY'
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          for needle in ("analyze/prompts/chunk_extract.system.md", "verify/prompts/compare.user.md",
+                         "templates/understanding.md.j2"):
+              assert any(n.endswith(needle) for n in names), needle
+          PY
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write      # push to GHCR on tags only
+      id-token: write      # keyless cosign (OIDC)
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+      # Pin the base by digest for release builds: set repository variable PYTHON_IMAGE to
+      # python:3.12-slim@sha256:<digest> (see docker/Dockerfile header). Falls back to the tag.
+      PYTHON_IMAGE: ${{ vars.PYTHON_IMAGE || 'python:3.12-slim' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - id: meta
+        run: |
+          VERSION=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "push=${{ startsWith(github.ref, 'refs/tags/v') && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
+      - name: Check tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 scripts/release.py "${GITHUB_REF_NAME}" --check --allow-dirty
+      - uses: docker/login-action@v3
+        if: steps.meta.outputs.push == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: ${{ steps.meta.outputs.push == 'true' }}
+          load: ${{ steps.meta.outputs.push != 'true' }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          build-args: |
+            PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
+            VERSION=${{ steps.meta.outputs.version }}
+            VCS_REF=${{ github.sha }}
+          provenance: true
+      - name: Smoke test (read-only rootfs, non-root, no network)
+        if: steps.meta.outputs.push != 'true'
+        run: |
+          IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          docker run --rm --read-only --network none --cap-drop ALL --tmpfs /tmp "$IMG" --help
+          docker inspect "$IMG" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
+      # ---- supply chain: only on tags, only where signing is possible (no secrets needed: OIDC)
+      - uses: sigstore/cosign-installer@v3
+        if: steps.meta.outputs.push == 'true'
+      - uses: anchore/sbom-action@v0
+        if: steps.meta.outputs.push == 'true'
+        continue-on-error: true
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Sign image and attach SBOM (cosign keyless)
+        if: steps.meta.outputs.push == 'true'
+        continue-on-error: true   # never fail a release on signing infrastructure problems; verify afterwards
+        run: |
+          REF=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          cosign sign --yes "$REF"
+          [ -f sbom.spdx.json ] && cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$REF" || true
+      - uses: actions/upload-artifact@v4
+        if: steps.meta.outputs.push == 'true' && hashFiles('sbom.spdx.json') != ''
+        with:
+          name: sbom
+          path: sbom.spdx.json

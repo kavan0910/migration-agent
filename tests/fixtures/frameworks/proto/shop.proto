@@ -1,0 +1,21 @@
+syntax = "proto3";
+package shop;
+
+// comment { not a block
+service Catalog {
+  rpc GetItem (GetItemRequest) returns (Item);
+  rpc Watch (stream GetItemRequest) returns (stream Item) {
+    option deprecated = true;
+  }
+}
+
+message GetItemRequest { string id = 1; }
+
+message Item {
+  string id = 1;
+  repeated string tags = 2;
+  map<string, int32> attrs = 3;
+  message Price { int64 cents = 1; }
+  oneof extra { string note = 4; }
+  enum Kind { A = 0; }
+}

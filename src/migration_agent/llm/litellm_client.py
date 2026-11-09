@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 import threading
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, Field
 
 from ..audit import AuditLog
-from .base import BudgetExceeded, LLMResponse, parse_json
+from .base import BudgetExceeded, LLMAuthError, LLMResponse, QuotaExhausted, parse_json
 
 DEFAULT_TIERS: dict[str, str] = {
     "chunk_extract": "claude-haiku-5-5",
@@ -44,6 +45,12 @@ class LLMConfig(BaseModel):
     backoff_max: float = 30.0
     timeout: float = 120.0
     max_output_tokens: int = 4096
+    # D-05 recovery: provider-requested waits (Retry-After / retryDelay) up to this many seconds are honoured;
+    # longer ones (e.g. daily quota exhausted) fail fast with QuotaExhausted instead of sleeping.
+    max_retry_after: float = 120.0
+    # {model: fallback_model}: used after retries are exhausted on overloaded/unavailable/rate-limit errors.
+    fallback_models: dict[str, str] = Field(default_factory=dict)
+    api_base: str | None = None  # custom endpoint (proxy / gateway); None = provider default
 
     def model_for(self, task: str) -> str:
         return self.models.get(task, self.default_model)
@@ -101,15 +108,80 @@ def estimate_cost(tasks: list[tuple[str, int, int]], config: LLMConfig | None = 
     return sum(_cost(config, config.model_for(t), tin, tout) for t, tin, tout in tasks)
 
 
-def _is_retryable(exc: BaseException) -> bool:
-    if isinstance(exc, (TimeoutError, ConnectionError)):
-        return True
-    status = getattr(exc, "status_code", None)
-    if isinstance(status, int):
-        return status == 429 or status >= 500
+def _status(exc: BaseException) -> int | None:
+    for obj in (exc, getattr(exc, "response", None)):
+        for attr in ("status_code", "http_status", "status"):
+            v = getattr(obj, attr, None)
+            if isinstance(v, int) and not isinstance(v, bool):
+                return v
+    return None
+
+
+def _kind(exc: BaseException) -> str:
+    """timeout | rate_limit | overloaded | server | connection | auth | not_found | bad_request | other"""
     name = type(exc).__name__.lower()
-    return any(k in name for k in ("timeout", "ratelimit", "serviceunavailable",
-                                   "internalserver", "apiconnection", "badgateway"))
+    st = _status(exc)
+    msg = str(exc).lower()
+    if isinstance(exc, TimeoutError) or "timeout" in name or st == 408:
+        return "timeout"
+    if st in (401, 403) or "authentication" in name or "permissiondenied" in name:
+        return "auth"
+    if st == 404 or "notfound" in name:
+        return "not_found"
+    if st == 429 or "ratelimit" in name:
+        return "rate_limit"
+    if st in (503, 529) or "serviceunavailable" in name or "overload" in name or "overloaded" in msg \
+            or "high demand" in msg:
+        return "overloaded"
+    if isinstance(exc, ConnectionError) or "apiconnection" in name or "connectionerror" in name:
+        return "connection"
+    if (st is not None and st >= 500) or any(k in name for k in ("internalserver", "badgateway", "gatewaytimeout")):
+        return "server"
+    if st == 400 or "badrequest" in name or "contextwindow" in name or (st is not None and 400 <= st < 500):
+        return "bad_request"
+    return "other"
+
+
+RETRYABLE_KINDS = frozenset({"timeout", "rate_limit", "overloaded", "server", "connection"})
+FALLBACK_KINDS = RETRYABLE_KINDS
+
+_DELAY_PATTERNS = [
+    re.compile(r"retry[_ ]?delay\W{0,6}(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds|m|min)?", re.I),
+    re.compile(r"(?:retry|try again) (?:in|after)\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds|m|min|minutes)?", re.I),
+]
+_QUOTA_MARKERS = ("perday", "per day", "daily", "insufficient_quota", "billing", "exceeded your current quota")
+
+
+def _retry_after(exc: BaseException) -> float | None:
+    """Seconds the provider asks us to wait (Retry-After header, retry_after attr, or 'retryDelay' in the body)."""
+    v = getattr(exc, "retry_after", None)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is not None:
+        try:
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+            if raw is not None:
+                return float(raw)
+        except (TypeError, ValueError, AttributeError):
+            pass
+    msg = str(exc)
+    for rx in _DELAY_PATTERNS:
+        m = rx.search(msg)
+        if m:
+            secs = float(m.group(1))
+            unit = (m.group(2) or "s").lower()
+            return secs / 1000 if unit == "ms" else secs * 60 if unit.startswith("m") and unit != "ms" else secs
+    return None
+
+
+def _quota_hint(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "quota" in msg and any(k in msg for k in _QUOTA_MARKERS) or "insufficient_quota" in msg
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    return _kind(exc) in RETRYABLE_KINDS
 
 
 def _default_transport() -> Callable[..., Any]:
@@ -168,17 +240,56 @@ class LiteLLMClient:
         return self.cache_dir / f"{key}.json"
 
     def _with_retries(self, kw: dict) -> Any:
+        """One model: retry transient failures with capped exponential backoff + jitter, honouring short
+        provider-requested delays; fail fast on quota exhaustion and on non-retryable errors."""
         cfg = self.config
         attempt = 0
+        model = kw.get("model", "?")
         while True:
             try:
                 return self._call_transport(**kw)
             except Exception as e:  # noqa: BLE001
-                if not _is_retryable(e) or attempt >= cfg.max_retries:
+                kind = _kind(e)
+                if kind == "auth":
+                    raise LLMAuthError(
+                        f"authentication/permission failed for model {model!r} ({type(e).__name__}: "
+                        f"{str(e)[:300]}). Check the API key and its access to this model.") from e
+                if kind not in RETRYABLE_KINDS:
+                    hint = {"not_found": f"model {model!r} (or endpoint) not found; check the model name in the config",
+                            "bad_request": f"request rejected by the provider for model {model!r}; not retrying"
+                            }.get(kind, f"non-retryable error from model {model!r}; not retrying")
+                    e.add_note(hint)
                     raise
-                delay = min(cfg.backoff_max, cfg.backoff_base * (2 ** attempt))
-                self._do_sleep(delay + random.uniform(0, delay * 0.25))
+                hint_s = _retry_after(e) if kind in ("rate_limit", "overloaded") else None
+                if kind == "rate_limit" and (_quota_hint(e) or (hint_s is not None and hint_s > cfg.max_retry_after)):
+                    raise QuotaExhausted(
+                        f"quota exhausted for model {model!r}: provider asks to wait "
+                        + (f"{hint_s:.0f}s" if hint_s is not None else "an unspecified time")
+                        + f" (max_retry_after={cfg.max_retry_after:.0f}s) - {str(e)[:200]}") from e
+                if attempt >= cfg.max_retries:
+                    raise
+                if hint_s is not None and hint_s <= cfg.max_retry_after:
+                    delay = hint_s + random.uniform(0, min(1.0, hint_s * 0.1))
+                else:
+                    d = min(cfg.backoff_max, cfg.backoff_base * (2 ** attempt))
+                    delay = min(cfg.backoff_max, d + random.uniform(0, d * 0.25))
+                self._do_sleep(delay)
                 attempt += 1
+
+    def _call_with_fallback(self, make_kw: Callable[[str], dict], model: str) -> tuple[Any, str]:
+        """Try `model`; once its retries are exhausted on an overloaded/unavailable-type failure, move to
+        config.fallback_models[model] (chains allowed, no cycles)."""
+        tried = [model]
+        while True:
+            try:
+                return self._with_retries(make_kw(model)), model
+            except Exception as e:  # noqa: BLE001
+                fb = self.config.fallback_models.get(model)
+                if fb and fb not in tried and (isinstance(e, QuotaExhausted) or _kind(e) in FALLBACK_KINDS):
+                    tried.append(fb)
+                    model = fb
+                    continue
+                raise
 
     @staticmethod
     def _usage(resp: Any, prompt_text: str, out_text: str) -> tuple[int, int]:
@@ -190,8 +301,10 @@ class LiteLLMClient:
 
     @staticmethod
     def _text(resp: Any) -> str:
-        choice = _get(resp, "choices")[0]
-        return _get(_get(choice, "message"), "content") or ""
+        choices = _get(resp, "choices")
+        if not choices:  # empty/malformed provider reply -> treated as malformed JSON (repair flow)
+            return ""
+        return _get(_get(choices[0], "message"), "content") or ""
 
     # -- public
     def complete(self, *, task: str, system: str, prompt: str, json_mode: bool = True,
@@ -215,16 +328,20 @@ class LiteLLMClient:
         if self.budget:
             self.budget.check(_cost(cfg, model, est_in, est_out), est_in + est_out)
 
-        kw: dict[str, Any] = {
-            "model": model,
-            "messages": self._build_messages(model, system, prompt),
-            "max_tokens": cfg.max_output_tokens,
-            "timeout": cfg.timeout,
-        }
-        if json_mode:
-            kw["response_format"] = {"type": "json_object"}
+        def make_kw(m: str, extra: list[dict] | None = None) -> dict[str, Any]:
+            kw: dict[str, Any] = {
+                "model": m,
+                "messages": self._build_messages(m, system, prompt) + (extra or []),
+                "max_tokens": cfg.max_output_tokens,
+                "timeout": cfg.timeout,
+            }
+            if cfg.api_base:
+                kw["api_base"] = cfg.api_base
+            if json_mode:
+                kw["response_format"] = {"type": "json_object"}
+            return kw
 
-        resp = self._with_retries(kw)
+        resp, used = self._call_with_fallback(make_kw, model)
         text = self._text(resp)
         tin, tout = self._usage(resp, system + prompt, text)
 
@@ -233,24 +350,20 @@ class LiteLLMClient:
                 parse_json(text)
             except (json.JSONDecodeError, ValueError):
                 if self.budget:
-                    self.budget.add(_cost(cfg, model, tin, tout), tin + tout)
-                kw2 = dict(kw)
-                kw2["messages"] = kw["messages"] + [
-                    {"role": "assistant", "content": text},
-                    {"role": "user", "content": REPAIR_INSTRUCTION}]
-                resp2 = self._with_retries(kw2)
+                    self.budget.add(_cost(cfg, used, tin, tout), tin + tout)
+                repair = [{"role": "assistant", "content": text}, {"role": "user", "content": REPAIR_INSTRUCTION}]
+                resp2, used2 = self._call_with_fallback(lambda m: make_kw(m, repair), used)
                 text2 = self._text(resp2)
                 tin2, tout2 = self._usage(resp2, system + prompt + text, text2)
                 text, tin, tout = text2, tin + tin2, tout + tout2
-                # budget for first attempt already added; add only second
-                cost = _cost(cfg, model, tin, tout)
-                out = LLMResponse(text=text, model=model, tokens_in=tin, tokens_out=tout, cost_usd=cost)
+                cost = _cost(cfg, used2, tin, tout)
+                out = LLMResponse(text=text, model=used2, tokens_in=tin, tokens_out=tout, cost_usd=cost)
                 if self.budget:
-                    self.budget.add(_cost(cfg, model, tin2, tout2), tin2 + tout2)
+                    self.budget.add(_cost(cfg, used2, tin2, tout2), tin2 + tout2)
                 return self._finish(task, out, prompt_version, input_hash, cpath, parse_ok=_json_ok(text))
 
-        cost = _cost(cfg, model, tin, tout)
-        out = LLMResponse(text=text, model=model, tokens_in=tin, tokens_out=tout, cost_usd=cost)
+        cost = _cost(cfg, used, tin, tout)
+        out = LLMResponse(text=text, model=used, tokens_in=tin, tokens_out=tout, cost_usd=cost)
         if self.budget:
             self.budget.add(cost, tin + tout)
         return self._finish(task, out, prompt_version, input_hash, cpath, parse_ok=True)

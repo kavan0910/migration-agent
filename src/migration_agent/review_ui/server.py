@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 from pydantic import BaseModel, Field, ValidationError
 
 from migration_agent.graph.models import Graph
+from migration_agent.ingest.secrets import redact_string
 from migration_agent.graph.store import GraphStoreError, diff_graphs, load_latest, load_snapshot, parse_graph
 from migration_agent.project import Project
 from migration_agent.review_ui.markdown import anchors, render_sections
@@ -179,7 +180,7 @@ class ReviewState:
     # -- writers -------------------------------------------------------
     def add_comment(self, data: dict) -> dict:
         inp = _CommentIn.model_validate(data)
-        text = inp.text.strip()
+        text = redact_string(inp.text.strip())  # pasted credentials never reach disk, prompts or the UI
         if not text:
             raise ApiError(400, "text must not be empty")
         with self.lock:
@@ -188,7 +189,7 @@ class ReviewState:
             cf = self.comments()
             nums = [int(c.id.split("-")[-1]) for c in cf.comments if c.id.startswith("CM-") and c.id[3:].isdigit()]
             c = Comment(id=f"CM-{(max(nums) if nums else 0) + 1:04d}", item_id=inp.item_id, text=text,
-                        author=inp.author.strip() or "user", created=_now())
+                        author=redact_string(inp.author.strip()) or "user", created=_now())
             cf.comments.append(c)
             _atomic_write(self.fb / "comments.json", cf.model_dump_json(indent=2) + "\n")
         return c.model_dump()
@@ -199,7 +200,7 @@ class ReviewState:
             if inp.finding_id not in {f.id for f in self.findings().findings}:
                 raise ApiError(404, f"unknown finding_id: {inp.finding_id[:64]}")
             rf = self.resolutions()
-            r = Resolution(finding_id=inp.finding_id, status=inp.status, note=inp.note.strip(), created=_now())
+            r = Resolution(finding_id=inp.finding_id, status=inp.status, note=redact_string(inp.note.strip()), created=_now())
             rf.resolutions.append(r)
             _atomic_write(self.fb / "resolutions.json", rf.model_dump_json(indent=2) + "\n")
         return r.model_dump()
@@ -254,6 +255,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Content-Security-Policy",
                          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
                          "connect-src 'self'; img-src data:; frame-src 'self'; frame-ancestors 'self'; "

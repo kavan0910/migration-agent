@@ -1,8 +1,18 @@
 [project]
 name = "migration-agent"
-version = "0.1.0"
-description = "Read-only legacy service analysis: Phase A foundation and static extraction"
+version = "0.2.0"
+description = "Read-only legacy service analysis: evidence-backed understanding docs and knowledge graph, with a blind Verifier and human review loop"
+readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["legacy", "migration", "static-analysis", "llm", "documentation"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: POSIX",
+  "Topic :: Software Development :: Documentation",
+]
 dependencies = [
   "click>=8.1",
   "pydantic>=2.6",
@@ -20,12 +30,22 @@ llm = ["litellm>=1.40"]
 [project.scripts]
 migration-agent = "migration_agent.cli:main"
 
+[project.urls]
+Documentation = "https://github.com/OWNER/migration-agent/tree/main/docs"  # TODO: set real repo URL
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/migration_agent"]
+# Non-Python package data (analyze/prompts/*.md, verify/prompts/*.md, templates/*.j2,
+# sandbox/README.md) is included automatically because it lives inside the package;
+# tests/test_release.py asserts this against the built wheel when `build` is available.
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "docs", "docker", "scripts/release.py", "README.md", "CHANGELOG.md",
+           "pyproject.toml", "*.config.json", ".env.example"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

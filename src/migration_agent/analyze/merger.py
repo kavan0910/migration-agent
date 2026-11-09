@@ -61,6 +61,7 @@ def merge_patches(patches: list[ChunkPatch], registry: Registry, base: Graph | N
             add_node(k, n.name, n.responsibility, n.evidence, n.inventory_refs, n.quirk, n.suspected_bug)
         for e in base.edges:
             edge_acc.setdefault((by_id[e.source], e.type, by_id[e.target]), []).extend(e.evidence)
+            registry.adopt_edge(e.source, e.type, e.target, e.id)
 
     for p in patches:
         for n in p.nodes:
@@ -122,7 +123,7 @@ class Checkpoint:
         p.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-")
         with os.fdopen(fd, "w") as f:
-            f.write(patch.model_dump_json(indent=2))
+            f.write(patch.model_dump_json())
         os.replace(tmp, p)
         return p
 
@@ -131,9 +132,53 @@ class Checkpoint:
             return set()
         return {p.stem for p in self.chunks.glob("*.json") if not p.name.startswith(".")}
 
-    def load_patches(self) -> list[ChunkPatch]:
-        return [ChunkPatch.model_validate_json((self.chunks / f"{c}.json").read_text())
-                for c in sorted(self.completed_chunk_ids())]
+    def load_patches(self, ids: "set[str] | list[str] | None" = None) -> list[ChunkPatch]:
+        """Load saved patches in sorted-id order (optionally only `ids`; unknown ids are skipped)."""
+        have = self.completed_chunk_ids()
+        want = sorted(have if ids is None else have & set(ids))
+        return [ChunkPatch.model_validate_json((self.chunks / f"{c}.json").read_text()) for c in want]
+
+    def load_patch(self, chunk_id: str) -> ChunkPatch | None:
+        p = self._path(chunk_id)
+        return ChunkPatch.model_validate_json(p.read_text()) if p.exists() else None
+
+    def delete_patch(self, chunk_id: str) -> None:
+        self._path(chunk_id).unlink(missing_ok=True)
+
+    # -- cached results of whole-graph steps (cross_ref, gap_fill): checkpoint/extra/<name>.json {"sig", ...}
+    def save_extra(self, name: str, sig: str, payload: dict) -> None:
+        p = self.dir / "extra" / f"{name}.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"sig": sig, **payload}, f)
+        os.replace(tmp, p)
+
+    def load_extra(self, name: str, sig: str) -> dict | None:
+        try:
+            d = json.loads((self.dir / "extra" / f"{name}.json").read_text())
+        except (OSError, ValueError):
+            return None
+        return d if isinstance(d, dict) and d.get("sig") == sig else None
+
+    # -- failures: checkpoint/failures.json {chunk_id: {task, error_class, error, ts}}
+    @property
+    def failures_path(self) -> Path:
+        return self.dir / "failures.json"
+
+    def load_failures(self) -> dict[str, dict]:
+        try:
+            d = json.loads(self.failures_path.read_text())
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def save_failures(self, failures: dict[str, dict]) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".tmp-")
+        with os.fdopen(fd, "w") as f:
+            json.dump(failures, f, indent=2, sort_keys=True)
+        os.replace(tmp, self.failures_path)
 
 
 def dedupe_fact_endpoints(graph: Graph) -> Graph:
@@ -147,13 +192,16 @@ def dedupe_fact_endpoints(graph: Graph) -> Graph:
     is_stub = lambda n: n.responsibility.startswith("(facts only")
     stubs = [n for n in graph.nodes if n.type == "endpoint" and is_stub(n)]
     full = [n for n in graph.nodes if n.type == "endpoint" and not is_stub(n)]
+    full_idx: dict[tuple[str, str], list[Node]] = {}
+    for f in full:
+        full_idx.setdefault((f.module, split(f)[0]), []).append(f)
     remap: dict[str, str] = {}
     for st in stubs:
         method, spath = split(st)
         spath = spath.rsplit("@", 1)[0]
         sline = next((e.line_start for e in st.evidence if e.line_start), None)
-        cands = [f for f in full if f.module == st.module and split(f)[0] == method
-                 and (split(f)[1].endswith(spath) if spath != "/" else True)]
+        cands = [f for f in full_idx.get((st.module, method), ())
+                 if (split(f)[1].endswith(spath) if spath != "/" else True)]
         near = [f for f in cands if sline is not None and any(
             e.line_start is not None and abs(e.line_start - sline) <= 3 for e in f.evidence)]
         pick = near[0] if len(near) == 1 else (cands[0] if len(cands) == 1 else None)
@@ -162,11 +210,14 @@ def dedupe_fact_endpoints(graph: Graph) -> Graph:
     if not remap:
         return graph
     by_id = {n.id: n for n in graph.nodes}
+    absorbed: dict[str, list[str]] = {}
+    for old, new in remap.items():
+        absorbed.setdefault(new, []).append(old)
     nodes = []
     for n in graph.nodes:
         if n.id in remap:
             continue
-        extra = [r for old, new in remap.items() if new == n.id for r in by_id[old].inventory_refs]
+        extra = [r for old in absorbed.get(n.id, ()) for r in by_id[old].inventory_refs]
         nodes.append(n.model_copy(update={"inventory_refs": sorted(set(n.inventory_refs) | set(extra))}) if extra else n)
     seen, edges = set(), []
     for e in graph.edges:
@@ -191,11 +242,14 @@ def collapse_entity_components(graph: Graph) -> Graph:
     if not remap:
         return graph
     by_id = {n.id: n for n in graph.nodes}
+    absorbed: dict[str, list[str]] = {}
+    for old, new in remap.items():
+        absorbed.setdefault(new, []).append(old)
     nodes = []
     for n in graph.nodes:
         if n.id in remap:
             continue
-        extra = [r for old, new in remap.items() if new == n.id for r in by_id[old].inventory_refs]
+        extra = [r for old in absorbed.get(n.id, ()) for r in by_id[old].inventory_refs]
         nodes.append(n.model_copy(update={"inventory_refs": sorted(set(n.inventory_refs) | set(extra))}) if extra else n)
     ent_ids = {n.id for n in nodes if n.type == "data_entity"}
     seen, edges = {}, []

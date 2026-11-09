@@ -34,3 +34,19 @@ def test_analyze_requires_key(tmp_path, monkeypatch):
     monkeypatch.setattr("migration_agent.dotenv.load_dotenv", lambda p: [])
     r = CliRunner().invoke(main, ["analyze", str(tmp_path)])
     assert r.exit_code != 0 and ".env" in r.output
+
+
+def test_ingest_refresh_replaces_code(tmp_path):
+    from migration_agent.cli import main
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.py").write_text("x = 1\n")
+    proj = tmp_path / "p.migration"
+    runner = CliRunner()
+    assert runner.invoke(main, ["init", str(src), "--project", str(proj)]).exit_code == 0
+    assert runner.invoke(main, ["ingest", str(proj)]).exit_code == 0
+    (src / "b.py").write_text("y = 2\n")
+    assert runner.invoke(main, ["ingest", str(proj)]).exit_code != 0          # non-empty code/ is refused
+    r = runner.invoke(main, ["ingest", str(proj), "--refresh"])
+    assert r.exit_code == 0, r.output
+    assert (proj / "code" / "b.py").exists()

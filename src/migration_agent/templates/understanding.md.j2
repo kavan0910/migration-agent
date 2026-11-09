@@ -4,8 +4,8 @@
 {% macro evs(n) -%}
 {% if n.evidence %}{% for e in n.evidence %}{{ ev(e) }}{{ ", " if not loop.last }}{% endfor %}{% else %}no evidence{% endif %}
 {%- endmacro %}
-{% macro item(n) %}
-- <a id="{{ n.id }}"></a>**{{ n.id }}** {{ n.name }}{% if n.quirk %} · **preserved quirk**{% endif %}{% if n.suspected_bug %} · **suspected bug**{% endif %}
+{% macro item(n, anchor=true) %}
+- {% if anchor %}<a id="{{ n.id }}"></a>{% endif %}**{{ n.id }}** {{ n.name }}{% if n.quirk %} · **preserved quirk**{% endif %}{% if n.suspected_bug %} · **suspected bug**{% endif %}
 
   - Responsibility: {{ n.responsibility or "(not described)" }}
   - Evidence: {{ evs(n) }}
@@ -21,12 +21,12 @@
 {% macro edge(e) -%}
 - <a id="{{ e.id }}"></a>**{{ e.id }}** {{ e.source }} -{{ e.type }}-> {{ e.target }} · evidence: {% if e.evidence %}{% for x in e.evidence %}{{ ev(x) }}{{ ", " if not loop.last }}{% endfor %}{% else %}none{% endif %} · confidence {{ e.confidence }}
 {% endmacro %}
-{% macro section(num, title, intro, nodes, empty) -%}
+{% macro section(num, title, intro, nodes, empty, anchor=true) -%}
 ## {{ num }}. {{ title }}
 
 {{ intro }}
 
-{% if nodes %}{% for n in nodes %}{{ item(n) }}{% endfor %}{% else %}_{{ empty }}_
+{% if nodes %}{% for n in nodes %}{{ item(n, anchor) }}{% endfor %}{% else %}_{{ empty }}_
 {% endif %}
 {% endmacro %}
 # Understanding: {{ name }}
@@ -95,21 +95,21 @@ Calls / contracts:
 
 {{ section(8, "Background Jobs & Consumers", "Scheduled jobs and message consumers.", sec.jobs, "No background jobs or consumers recorded.") }}
 {{ section(9, "Configuration & Environment", "Configuration keys and environment settings.", sec.configs, "No configuration recorded.") }}
-{{ section(10, "Auth, Error Handling & Cross-Cutting", "Components whose name, module or responsibility mentions auth, errors, logging, validation or middleware.", sec.xcut, "No cross-cutting concerns identified.") }}
-{{ section(11, "Existing Tests", "Items whose evidence lives in test files.", sec.tests, "No tests found in the graph.") }}
+{{ section(10, "Auth, Error Handling & Cross-Cutting", "Components whose name, module or responsibility mentions auth, errors, logging, validation or middleware.", sec.xcut, "No cross-cutting concerns identified.", false) }}
+{{ section(11, "Existing Tests", "Items whose evidence lives in test files.", sec.tests, "No tests found in the graph.", false) }}
 ## 12. Quirks & Suspicious Code
 
 ### Found bugs & suspicious behaviour
 
 {% if sec.bugs %}> Suspected bugs found while reading the code. Review before migrating.
 
-{% for n in sec.bugs %}{{ item(n) }}{% endfor %}{% else %}_No suspected bugs were found._
+{% for n in sec.bugs %}{{ item(n, false) }}{% endfor %}{% else %}_No suspected bugs were found._
 {% endif %}
 ### Preserved quirks
 
 {% if sec.quirks %}Behaviour that looks odd but must be preserved.
 
-{% for n in sec.quirks %}{{ item(n) }}{% endfor %}{% else %}_No preserved quirks recorded._
+{% for n in sec.quirks %}{{ item(n, false) }}{% endfor %}{% else %}_No preserved quirks recorded._
 {% endif %}
 
 ## 13. Blind Spots / low confidence
@@ -120,7 +120,7 @@ Calls / contracts:
 {% endfor %}
 {% endif %}{% if sec.blind_edges %}### Edges with low or no confidence
 
-{% for e in sec.blind_edges %}- [{{ e.id }}](#{{ e.id }}) {{ e.source }} -{{ e.type }}-> {{ e.target }} · confidence {{ e.confidence }}
+{% for e in sec.blind_edges %}- {{ e.id }} {{ e.source }} -{{ e.type }}-> {{ e.target }} · confidence {{ e.confidence }}
 {% endfor %}
 {% endif %}{% if sec.fallback %}### Fallback-parsed files
 

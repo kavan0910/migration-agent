@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..graph import load_latest
+from ..ingest.secrets import redact_string
 from ..project import Project
 from ..verify.models import Comment, CommentsFile
 from ._io import ReviewError, atomic_write, now_iso
@@ -31,7 +32,8 @@ def add_comment(project: Project, item_id: str, text: str, author: str = "user")
         raise ReviewError(f"unknown graph item: {item_id}")
     cf = load_comments(project)
     nums = [int(c.id.split("-")[1]) for c in cf.comments if c.id.startswith("CM-") and c.id[3:].isdigit()]
-    c = Comment(id=f"CM-{max(nums, default=0) + 1:04d}", item_id=item_id, text=text, author=author,
+    # comments flow into re-analysis prompts: never persist pasted credentials
+    c = Comment(id=f"CM-{max(nums, default=0) + 1:04d}", item_id=item_id, text=redact_string(text), author=redact_string(author),
                 created=now_iso())
     cf.comments.append(c)
     _save(project, cf)

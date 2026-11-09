@@ -1,0 +1,68 @@
+{
+  "categories": {
+    "components": {
+      "actual": 6,
+      "expected": 6,
+      "f1": 1.0,
+      "missed": [],
+      "precision": 1.0,
+      "recall": 1.0,
+      "spurious": []
+    },
+    "edges": {
+      "actual": 16,
+      "expected": 9,
+      "f1": 0.64,
+      "missed": [
+        "handled_by|endpoint|src/main/java/com/acme/library/LoanController.java|POST /api/loans/checkout/{bookId}|component|src/main/java/com/acme/library/LoanController.java"
+      ],
+      "precision": 0.5,
+      "recall": 0.8888888888888888,
+      "spurious": [
+        "depends_on|component|src/main/java/com/acme/library/BookController.java|entity|src/main/java/com/acme/library/Book.java",
+        "depends_on|component|src/main/java/com/acme/library/BookRepository.java|entity|src/main/java/com/acme/library/Book.java",
+        "depends_on|component|src/main/java/com/acme/library/LoanController.java|entity|src/main/java/com/acme/library/Loan.java",
+        "depends_on|component|src/main/java/com/acme/library/LoanController.java|entity|src/main/java/com/acme/library/Member.java",
+        "depends_on|component|src/main/java/com/acme/library/LoanRepository.java|entity|src/main/java/com/acme/library/Loan.java",
+        "depends_on|component|src/main/java/com/acme/library/LoanService.java|entity|src/main/java/com/acme/library/Book.java",
+        "depends_on|component|src/main/java/com/acme/library/LoanService.java|entity|src/main/java/com/acme/library/Loan.java",
+        "depends_on|component|src/main/java/com/acme/library/LoanService.java|entity|src/main/java/com/acme/library/Member.java"
+      ]
+    },
+    "endpoints": {
+      "actual": 3,
+      "expected": 3,
+      "f1": 1.0,
+      "missed": [],
+      "precision": 1.0,
+      "recall": 1.0,
+      "spurious": []
+    },
+    "entities": {
+      "actual": 3,
+      "expected": 3,
+      "f1": 1.0,
+      "missed": [],
+      "precision": 1.0,
+      "recall": 1.0,
+      "spurious": []
+    },
+    "rules": {
+      "actual": 4,
+      "expected": 4,
+      "f1": 1.0,
+      "missed": [],
+      "precision": 1.0,
+      "recall": 1.0,
+      "spurious": []
+    }
+  },
+  "evidence_errors": [],
+  "evidence_validity": 1.0,
+  "gates": {
+    "evidence_validity": true,
+    "injection": true
+  },
+  "injection_hits": [],
+  "passed": true
+}

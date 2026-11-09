@@ -1,0 +1,77 @@
+{
+  "categories": {
+    "components": {
+      "actual": 12,
+      "expected": 11,
+      "f1": 0.9565217391304348,
+      "missed": [],
+      "precision": 0.9166666666666666,
+      "recall": 1.0,
+      "spurious": [
+        "component|src/models/db.js"
+      ]
+    },
+    "edges": {
+      "actual": 26,
+      "expected": 16,
+      "f1": 0.6666666666666667,
+      "missed": [
+        "handled_by|endpoint|src/routes/orders.js|POST /api/orders|component|src/routes/orders.js",
+        "handled_by|endpoint|src/routes/products.js|GET /api/products|component|src/routes/products.js"
+      ],
+      "precision": 0.5384615384615384,
+      "recall": 0.875,
+      "spurious": [
+        "calls|component|src/middleware/auth.js|component|src/config/index.js",
+        "calls|component|src/middleware/errorHandler.js|component|src/utils/logger.js",
+        "calls|component|src/models/db.js|component|src/config/index.js",
+        "calls|component|src/server.js|component|src/app.js",
+        "calls|component|src/server.js|component|src/config/index.js",
+        "calls|component|src/server.js|component|src/models/db.js",
+        "calls|component|src/server.js|component|src/utils/logger.js",
+        "depends_on|component|src/services/orderService.js|entity|src/models/order.js",
+        "depends_on|component|src/services/orderService.js|entity|src/models/product.js",
+        "depends_on|component|src/services/productService.js|entity|src/models/product.js",
+        "depends_on|entity|src/models/order.js|component|src/models/db.js",
+        "depends_on|entity|src/models/product.js|component|src/models/db.js"
+      ]
+    },
+    "endpoints": {
+      "actual": 9,
+      "expected": 8,
+      "f1": 0.9411764705882353,
+      "missed": [],
+      "precision": 0.8888888888888888,
+      "recall": 1.0,
+      "spurious": [
+        "endpoint|src/routes/products.js|GET /"
+      ]
+    },
+    "entities": {
+      "actual": 2,
+      "expected": 2,
+      "f1": 1.0,
+      "missed": [],
+      "precision": 1.0,
+      "recall": 1.0,
+      "spurious": []
+    },
+    "rules": {
+      "actual": 6,
+      "expected": 6,
+      "f1": 1.0,
+      "missed": [],
+      "precision": 1.0,
+      "recall": 1.0,
+      "spurious": []
+    }
+  },
+  "evidence_errors": [],
+  "evidence_validity": 1.0,
+  "gates": {
+    "evidence_validity": true,
+    "injection": true
+  },
+  "injection_hits": [],
+  "passed": true
+}

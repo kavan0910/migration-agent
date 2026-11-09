@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -16,7 +18,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, Field
 
-from .secrets import SecretFinding, scan_text
+from .secrets import SecretFinding, is_secret_filename, redact_text
 
 __all__ = ["ingest", "IngestReport", "IngestError", "Exclusion", "SecretFinding"]
 
@@ -45,7 +47,7 @@ class IngestError(Exception):
 
 class Exclusion(BaseModel):
     path: str
-    reason: str  # vcs|dependencies|build_output|cache|binary|too_large|symlink
+    reason: str  # vcs|dependencies|build_output|cache|binary|too_large|symlink|special_file|secret_file|unsafe_name
     detail: str = ""
 
 
@@ -135,7 +137,7 @@ def _extract_zip(archive: Path, out: Path, max_bytes: int, max_files: int, max_r
 
 def _check_link(rel: PurePosixPath, target: str) -> None:
     t = PurePosixPath(target.replace("\\", "/"))
-    if t.is_absolute():
+    if t.is_absolute() or (len(target) > 1 and target[1] == ":"):
         raise IngestError(f"unsafe symlink {str(rel)!r} -> {target!r} (absolute target)")
     resolved = os.path.normpath(str(rel.parent / t))
     if resolved == ".." or resolved.startswith("../") or resolved.startswith("/"):
@@ -192,12 +194,17 @@ def _git_clone(url: str, out: Path) -> str:
         "GIT_ALLOW_PROTOCOL": "https:ssh:file",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,   # ignore user config (url rewrites, credential helpers, filters)
+        "GIT_LFS_SKIP_SMUDGE": "1",        # never fetch LFS objects (network + large downloads)
+        "GIT_TEMPLATE_DIR": "",            # no hook templates copied into the clone
     }
     cmd = [
         "git", "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never",
         "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always",
         "-c", "protocol.file.allow=always", "-c", "core.fsmonitor=false",
-        "clone", "--depth", "1", "--no-tags", "--single-branch", "--", url, str(out),
+        "-c", "filter.lfs.smudge=", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false",
+        "-c", "submodule.recurse=false",
+        "clone", "--no-recurse-submodules", "--depth", "1", "--no-tags", "--single-branch", "--", url, str(out),
     ]
     try:
         r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
@@ -212,6 +219,9 @@ def _git_clone(url: str, out: Path) -> str:
 
 
 # ------------------------------------------------------------- normalize
+_CTRL_NAME = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff\u2028\u2029]")
+
+
 def _is_binary(path: Path) -> bool:
     if path.suffix.lower() in BINARY_EXTS:
         return True
@@ -245,7 +255,28 @@ def _normalize(root: Path, dest: Path, report: IngestReport, max_bytes: int, max
             if full.is_symlink():
                 report.exclusions.append(Exclusion(path=rel, reason="symlink", detail="symlink not copied"))
                 continue
-            size = full.stat().st_size
+            if _CTRL_NAME.search(rel):
+                # control/bidi characters in a path could forge prompt structure (=== path === headers)
+                report.exclusions.append(Exclusion(path=repr(rel)[1:-1], reason="unsafe_name",
+                                                   detail="control or bidi characters in file name"))
+                continue
+            try:
+                st = full.lstat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):  # FIFO/device/socket: opening could block or read hardware
+                report.exclusions.append(Exclusion(path=rel, reason="special_file", detail="not a regular file"))
+                continue
+            if is_secret_filename(name):
+                report.exclusions.append(Exclusion(path=rel, reason="secret_file", detail="credential file withheld"))
+                report.secret_findings.append(SecretFinding(file=rel, line=0, kind="secret_file",
+                                                            preview="[file withheld: credential file]"))
+                if st.st_size <= MAX_FILE_BYTES:  # classify what it holds (kinds only, never values)
+                    report.secret_findings.extend(
+                        redact_text(rel, full.read_bytes().decode("utf-8", "replace"))[1])
+                report.files_with_secrets.append(rel)
+                continue
+            size = st.st_size
             if size > MAX_FILE_BYTES:
                 report.exclusions.append(Exclusion(path=rel, reason="too_large", detail=f"{size} bytes > {MAX_FILE_BYTES}"))
                 continue
@@ -255,16 +286,18 @@ def _normalize(root: Path, dest: Path, report: IngestReport, max_bytes: int, max
             if report.bytes_copied + size > max_bytes:
                 raise IngestError(f"total size exceeds limit {max_bytes}")
             data = full.read_bytes()
+            tree.update(rel.encode() + b"\0" + hashlib.sha256(data).digest())  # hash of the original bytes
+            clean, found = redact_text(rel, data.decode("utf-8", "replace"))
+            if found:
+                # secrets never leave ingest: code/ holds [REDACTED:<kind>] placeholders
+                data = clean.encode("utf-8")
+                report.secret_findings.extend(found)
+                report.files_with_secrets.append(rel)
             target = dest / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             report.files_copied += 1
             report.bytes_copied += len(data)
-            tree.update(rel.encode() + b"\0" + hashlib.sha256(data).digest())
-            found = scan_text(rel, data.decode("utf-8", "replace"))
-            if found:
-                report.secret_findings.extend(found)
-                report.files_with_secrets.append(rel)
     report.files_skipped = len(report.exclusions)
     return tree.hexdigest()
 

@@ -1,0 +1,19 @@
+[
+  "## Contents",
+  "## 1. Purpose & Capabilities",
+  "## 2. Boundary & External Dependencies",
+  "## 3. Component Responsibilities",
+  "## 4. Endpoints & API Surface",
+  "## 5. Data Model & Storage",
+  "## 6. Business Rules",
+  "## 7. Integrations & Contracts",
+  "## 8. Background Jobs & Consumers",
+  "## 9. Configuration & Environment",
+  "## 10. Auth, Error Handling & Cross-Cutting",
+  "## 11. Existing Tests",
+  "## 12. Quirks & Suspicious Code",
+  "## 13. Blind Spots / low confidence",
+  "## 14. Open Questions & Assumptions",
+  "## 15. Coverage Matrix",
+  "## Changelog"
+]
