@@ -185,6 +185,33 @@ def run_ingest(proj: Project, source: str):
     return ingest(source, proj.code)
 
 
+def run_ingest_stage(proj: Project, source: str | None = None, *, refresh: bool = False):
+    """CLI/service `ingest`: optionally clear code/ (it is the tool's own copy), ingest under an audit span and
+    write ingest_report.json. Returns the IngestReport."""
+    import shutil
+    from .audit import AuditLog
+    if refresh and proj.code.exists():
+        for child in proj.code.iterdir():
+            shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+    with AuditLog(proj.audit_dir / "audit.jsonl").span("cli", "ingest"):
+        r = run_ingest(proj, source if source is not None else proj.meta().source)
+    (proj.root / "ingest_report.json").write_text(r.model_dump_json(indent=2))
+    return r
+
+
+def run_extract_stage(proj: Project) -> Inventory:
+    """CLI/service `extract`: run_extract under an audit span."""
+    from .audit import AuditLog
+    with AuditLog(proj.audit_dir / "audit.jsonl").span("cli", "extract"):
+        return run_extract(proj)
+
+
+def ensure_extracted(proj: Project, force: bool = False) -> None:
+    """Facts/inventory are prerequisites of analysis: (re)build them when missing or when `force`."""
+    if force or not proj.inventory_path.exists():
+        run_extract(proj)
+
+
 def run_extract(proj: Project) -> Inventory:
     ast = extract_ast(proj.code)
     write_ast_facts(ast, proj.facts / "ast.json")

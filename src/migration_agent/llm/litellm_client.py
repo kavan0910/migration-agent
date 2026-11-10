@@ -51,6 +51,9 @@ class LLMConfig(BaseModel):
     # {model: fallback_model}: used after retries are exhausted on overloaded/unavailable/rate-limit errors.
     fallback_models: dict[str, str] = Field(default_factory=dict)
     api_base: str | None = None  # custom endpoint (proxy / gateway); None = provider default
+    # Explicit per-run credential (hosted use). When set it is passed to the provider call and the process
+    # environment is not consulted for it. Never serialized or shown in repr().
+    api_key: str | None = Field(default=None, exclude=True, repr=False)
 
     def model_for(self, task: str) -> str:
         return self.models.get(task, self.default_model)
@@ -337,6 +340,8 @@ class LiteLLMClient:
             }
             if cfg.api_base:
                 kw["api_base"] = cfg.api_base
+            if cfg.api_key:
+                kw["api_key"] = cfg.api_key
             if json_mode:
                 kw["response_format"] = {"type": "json_object"}
             return kw

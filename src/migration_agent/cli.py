@@ -59,17 +59,10 @@ def _proj(path: Path) -> Project:
                                               "(use before `analyze --incremental` after the source changed).")
 def ingest_cmd(project: Path, refresh: bool) -> None:
     """Copy the project's source into code/ (path, zip, tarball or git URL)."""
-    import shutil
-    from .audit import AuditLog
-    from .pipeline import run_ingest
+    from .pipeline import run_ingest_stage
     p = _proj(project)
-    if refresh and p.code.exists():
-        for child in p.code.iterdir():  # code/ is the tool's own copy, never the user's original
-            shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
-    with AuditLog(p.audit_dir / "audit.jsonl").span("cli", "ingest"):
-        r = run_ingest(p, p.meta().source)
+    r = run_ingest_stage(p, refresh=refresh)
     click.echo(f"ingested {r.files_copied} files, skipped {r.files_skipped}, secret findings {len(r.secret_findings)}")
-    (p.root / "ingest_report.json").write_text(r.model_dump_json(indent=2))
 
 
 main.add_command(ingest_cmd, "ingest")
@@ -79,11 +72,8 @@ main.add_command(ingest_cmd, "ingest")
 @click.argument("project", type=click.Path(exists=True, path_type=Path))
 def extract(project: Path) -> None:
     """Run static extraction and write the coverage inventory."""
-    from .audit import AuditLog
-    from .pipeline import run_extract
-    p = _proj(project)
-    with AuditLog(p.audit_dir / "audit.jsonl").span("cli", "extract"):
-        inv = run_extract(p)
+    from .pipeline import run_extract_stage
+    inv = run_extract_stage(_proj(project))
     click.echo(f"inventory: {len(inv.items)} items {inv.counts}")
 
 
@@ -125,13 +115,12 @@ def analyze(project: Path, offline: bool, config_path: Path | None, max_usd: flo
     from .audit import AuditLog
     from .llm.litellm_client import Budget, LiteLLMClient, LLMConfig
     from .llm.offline import OfflineLLM
-    from .pipeline import run_extract
+    from .pipeline import ensure_extracted
     import os
     if not offline and not dry_run and not any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY")):
         raise click.ClickException("No LLM API key found. Add `ANTHROPIC_API_KEY=...` (or GEMINI_API_KEY) to the .env file in the migration-agent project root (see .env.example), or use --offline.")
     p = _proj(project)
-    if incremental or not p.inventory_path.exists():
-        run_extract(p)  # incremental: facts must reflect the re-ingested source (no LLM involved)
+    ensure_extracted(p, force=incremental)  # incremental: facts must reflect the re-ingested source (no LLM involved)
     cfg = _load_cfg(config_path)
     max_usd = _budget(max_usd)
     n, usd = estimate(p, cfg, incremental=incremental)

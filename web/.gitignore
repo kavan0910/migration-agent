@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+next-env.d.ts
+tsconfig.tsbuildinfo
+.env
+.env.local
+coverage
+test-results
+AGENTS.md

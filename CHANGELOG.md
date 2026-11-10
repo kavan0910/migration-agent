@@ -3,6 +3,17 @@
 Format: [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 The version lives in `pyproject.toml` only.
 
+## [Unreleased] - 0.3.0 platform
+
+### Added
+- Hosted platform scaffolding (see `docs/platform-contract.md`): `deploy/` compose stack (postgres, API, hardened worker behind an allowlisting egress proxy, web, optional MinIO), `Dockerfile.backend`, `Dockerfile.web`, `.env.example`, `smoke.sh`.
+- CI workflows for backend, web and security (pip-audit, npm audit, Trivy, gitleaks, compose validation). Not yet verified: repository Actions runs currently end in `startup_failure`.
+- `docs/security/`: data handling and retention draft, subprocessor template, incident response outline, secure SDLC, hosted threat model, SOC 2 readiness checklist, customer security overview draft; `SECURITY.md`.
+- `docs/operations-runbook.md`.
+
+### Known gaps
+- No certification or audit of any kind. Stack and images not yet built or run end to end; no TLS ingress; worker is long-lived and holds database credentials; no billing by design.
+
 ## [0.2.0] - 2026-11-09
 
 ### Added

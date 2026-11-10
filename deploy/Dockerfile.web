@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1
+# Web image (Next.js). Build context = repo root:
+#   docker build -f deploy/Dockerfile.web --build-arg NEXT_PUBLIC_API_URL=https://api.example.com -t migration-agent-web:local .
+# NEXT_PUBLIC_* values are PUBLIC and baked into the browser bundle: never pass a secret as a build arg.
+ARG NODE_IMAGE=node:22-slim
+
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /app
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --ignore-scripts
+
+FROM ${NODE_IMAGE} AS build
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_API_MOCK=0
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} NEXT_PUBLIC_API_MOCK=${NEXT_PUBLIC_API_MOCK} \
+    NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY web/ ./
+RUN mkdir -p public && npm run build && npm prune --omit=dev --ignore-scripts
+
+FROM ${NODE_IMAGE} AS runtime
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 HOME=/tmp
+RUN groupadd --gid 10001 app && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app
+WORKDIR /app
+COPY --from=build --chown=root:root /app/package.json ./package.json
+COPY --from=build --chown=root:root /app/node_modules ./node_modules
+COPY --from=build --chown=root:root /app/.next ./.next
+COPY --from=build --chown=root:root /app/public ./public
+# Next writes its image/fetch cache under .next/cache: compose mounts a tmpfs there (read-only rootfs).
+RUN mkdir -p /app/.next/cache && chown app:app /app/.next/cache
+USER 10001:10001
+EXPOSE 3000
+CMD ["node_modules/.bin/next", "start", "-p", "3000", "-H", "0.0.0.0"]

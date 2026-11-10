@@ -1,0 +1,202 @@
+# Full platform stack. Run from the repo root:
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+# Optional S3-compatible store:  add  --profile s3
+#
+# Networks
+#   edge     : api + web, published on loopback only. api can reach the internet (git clones; see NOTES).
+#   backend  : INTERNAL (no default route). postgres, api, worker, egress-proxy.
+#   egress   : routable; ONLY the egress-proxy (and api via edge) can leave. The worker has no route out
+#              except through the allowlisting proxy to MODEL_ENDPOINT_HOST:443.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ma_app}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-migration_agent}
+  AUTH_MODE: ${AUTH_MODE:-dev}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  STORE_BACKEND: ${STORE_BACKEND:-local}
+  STORE_DIR: ${STORE_DIR:-/data/objects}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+  S3_REGION: ${S3_REGION:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-migration_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-ma_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, FOWNER, DAC_OVERRIDE]   # needed by the official image entrypoint
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+
+  api:
+    image: migration-agent-backend:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+    restart: unless-stopped
+    <<: *hardening
+    user: "10001:10001"
+    pids_limit: 256
+    mem_limit: 1g
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    environment:
+      <<: *backend-env
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      SIGNUP_ENABLED: ${SIGNUP_ENABLED:-true}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      MAX_EXTRACTED_MB: ${MAX_EXTRACTED_MB:-500}
+      GIT_ALLOWED_HOSTS: ${GIT_ALLOWED_HOSTS:-}
+      # No model provider keys here: only the worker calls the model.
+    volumes:
+      - objects:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [backend, edge]
+
+  worker:
+    image: migration-agent-backend:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    <<: *hardening
+    user: "10001:10001"
+    pids_limit: ${WORKER_PIDS_LIMIT:-256}
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *backend-env
+      SCRATCH_DIR: /scratch
+      ENGINE_WORKERS: ${ENGINE_WORKERS:-2}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+      DEFAULT_MAX_USD: ${DEFAULT_MAX_USD:-5.0}
+      HARD_MAX_USD: ${HARD_MAX_USD:-200.0}
+      HTTPS_PROXY: http://egress-proxy:3128
+      HTTP_PROXY: http://egress-proxy:3128
+      NO_PROXY: postgres,localhost,127.0.0.1,minio
+      MODEL_API_BASE: ${MODEL_API_BASE:-}
+      PROFILE_FAST_MODEL: ${PROFILE_FAST_MODEL:-gemini/gemini-2.5-flash-lite}
+      PROFILE_BALANCED_MODEL: ${PROFILE_BALANCED_MODEL:-gemini/gemini-2.5-flash}
+      PROFILE_BEST_MODEL: ${PROFILE_BEST_MODEL:-gemini/gemini-2.5-pro}
+      MA_LLM_MAX_RETRIES: ${MA_LLM_MAX_RETRIES:-}
+      MA_LOG_LEVEL: ${MA_LOG_LEVEL:-WARNING}
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # Model key: worker only, injected at run time from deploy/.env, never baked into an image.
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+    volumes:
+      - objects:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /scratch:rw,noexec,nosuid,size=512m,uid=10001,gid=10001
+    depends_on:
+      postgres: { condition: service_healthy }
+      egress-proxy: { condition: service_started }
+    networks: [backend]          # internal only: no route to the internet except via egress-proxy
+
+  # Allowlisting forward proxy (same design as docker/docker-compose.yml): CONNECT to MODEL_ENDPOINT_HOST:443 only.
+  egress-proxy:
+    image: ubuntu/squid:6.6-24.04_beta
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: ["no-new-privileges:false"]
+    tmpfs: [/var/run, /var/log/squid, /var/spool/squid]
+    environment:
+      MODEL_ENDPOINT_HOST: ${MODEL_ENDPOINT_HOST:-generativelanguage.googleapis.com}
+    volumes:
+      - ../docker/squid.conf:/etc/squid/squid.conf.tpl:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /var/run/squid &&
+        sed "s/__MODEL_ENDPOINT_HOST__/$${MODEL_ENDPOINT_HOST}/" /etc/squid/squid.conf.tpl > /var/run/squid.conf &&
+        exec squid -f /var/run/squid.conf -N -C
+    networks: [backend, egress]
+
+  web:
+    image: migration-agent-web:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_MOCK: ${NEXT_PUBLIC_API_MOCK:-0}
+    restart: unless-stopped
+    <<: *hardening
+    user: "10001:10001"
+    pids_limit: 128
+    mem_limit: 512m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/.next/cache:rw,noexec,nosuid,size=128m,uid=10001,gid=10001
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [edge]
+
+  # Optional S3-compatible store, for when STORAGE_BACKEND=s3 is implemented (S3Store is a skeleton today).
+  minio:
+    profiles: ["s3"]
+    image: minio/minio:latest        # pin by digest before any real use
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "127.0.0.1:9001:9001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+
+volumes:
+  pgdata:
+  objects:
+  miniodata:
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+  egress: {}

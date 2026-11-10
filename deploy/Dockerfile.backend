@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# Backend API + worker image. Build context = repo root (the engine in src/ is installed alongside backend/):
+#   docker build -f deploy/Dockerfile.backend -t migration-agent-backend:local .
+# Pin the base for releases:  --build-arg PYTHON_IMAGE=python:3.12-slim@sha256:<digest>
+# No secrets are baked: all credentials arrive as environment variables at run time.
+ARG PYTHON_IMAGE=python:3.12-slim
+
+FROM ${PYTHON_IMAGE} AS builder
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY backend ./backend
+RUN pip install build \
+ && python -m build --wheel --outdir /wheels . \
+ && pip wheel --wheel-dir /wheels "$(ls /wheels/migration_agent-*.whl)[llm]" \
+ && pip wheel --wheel-dir /wheels ./backend
+
+FROM ${PYTHON_IMAGE} AS runtime
+ARG PYTHON_IMAGE
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="migration-agent-backend" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.base.name="${PYTHON_IMAGE}"
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp \
+    TIKTOKEN_CACHE_DIR=/tmp/tiktoken LITELLM_LOCAL_MODEL_COST_MAP=True
+RUN groupadd --gid 10001 app \
+ && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin app \
+ && mkdir -p /data /scratch && chown app:app /data /scratch
+RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
+    pip install --no-cache-dir --no-index --find-links /wheels \
+      "$(ls /wheels/migration_agent-*.whl)[llm]" /wheels/*backend*.whl \
+ && rm -rf /root/.cache
+WORKDIR /app
+USER 10001:10001
+EXPOSE 8000
+# Default command is the API; the worker overrides it (python -m app.worker). Health is probed by compose.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

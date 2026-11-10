@@ -135,8 +135,9 @@ def _is_stop(e: BaseException) -> bool:
 
 def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = lambda s: None,
                 incremental: bool = False, workers: int = 1, max_usd: float | None = None,
-                context_tokens: int | None = None) -> dict:
-    audit = AuditLog(proj.audit_dir / "audit.jsonl")
+                context_tokens: int | None = None,
+                on_progress: Callable[[int, int], None] | None = None) -> dict:
+    audit =AuditLog(proj.audit_dir / "audit.jsonl")
     if incremental:  # the source may have been re-ingested: refresh facts/inventory (no LLM involved)
         from ..pipeline import run_extract
         run_extract(proj)
@@ -209,11 +210,22 @@ def run_analyze(proj: Project, llm: LLMClient, *, log: Callable[[str], None] = l
                        unresolved=p1.unresolved + p2.unresolved)
         return p, ok
 
+    progress_done = len(plan.reuse)
+
+    def progress() -> None:
+        if on_progress is not None:
+            on_progress(progress_done, len(chunks))
+
     def finish(c, p: ChunkPatch, ok: bool) -> None:
+        nonlocal progress_done
         patches[c.id] = p
         ckpt.save_patch(p)  # partial results are preserved even for failed chunks (retried on next run)
         if ok:
             log(f"{c.id}: {len(p.nodes)} nodes")
+        progress_done += 1
+        progress()
+
+    progress()
 
     for cid in ids:
         if cid in plan.reuse:
