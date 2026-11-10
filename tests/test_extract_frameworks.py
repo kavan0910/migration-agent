@@ -60,3 +60,19 @@ def test_deterministic_and_graceful():
     for rel, junk in (("A.java", "@GetMapping(\"/x"), ("a.py", "@app.get("), ("B.cs", "[HttpGet(\"x"), ("config/routes.rb", "resources :a do\nend\nend\nend")):
         extract_routes(rel, junk)  # must not raise
     assert extract_routes("README.md", "@GetMapping") == []
+
+
+def test_django_urlconf_and_drf_router():
+    assert names("django/urls.py") == [
+        "ANY /articles",
+        "ANY /articles/feed",
+        "ANY /articles/{article_slug}/comments/{comment_pk}",
+        "ANY health/",
+        "ANY users/<int:pk>/",
+        "ANY /tags",
+    ]
+
+
+def test_django_ignores_docstring_and_comment_examples():
+    src = '"""Examples:\n    url(r\'^$\', views.home, name=\'home\')\n"""\nurlpatterns = [\n    # url(r\'^old/\', v)\n    url(r\'^real/$\', v),\n]\n'
+    assert [f.name for f in extract_routes("proj/urls.py", src)] == ["ANY /real"]

@@ -2,7 +2,7 @@
 
 Public API:
     extract_routes(rel_path, text) -> list[Found]   # dispatches on file extension
-    extract_spring / extract_python_web / extract_rails / extract_aspnet (text, rel) -> list[Found]
+    extract_spring / extract_python_web / extract_django / extract_rails / extract_aspnet (text, rel) -> list[Found]
 
 Every extractor returns ``Found`` records (kind="route", name="METHOD /full/path", file, line) in
 source order; ``name`` uses an uppercase method (``ANY`` when unknown). Prefixes (class-level mappings,
@@ -494,6 +494,64 @@ def extract_aspnet(text: str, rel: str) -> list[Found]:
     return out
 
 
+
+# ---------------------------------------------------------------- Django
+_DJ_CALL = re.compile(r"(?<![\w.])(path|re_path|url)\s*\(")
+_DJ_REGISTER = re.compile(r"\b\w+\.register\s*\(")
+_DJ_GROUP = re.compile(r"\(\?P<(\w+)>(?:[^()\\]|\\.|\([^()]*\))*\)")
+
+
+def _django_regex_to_path(rx: str) -> str:
+    rx = _DJ_GROUP.sub(lambda m: "{" + m.group(1) + "}", rx)
+    rx = rx.lstrip("^")
+    rx = re.sub(r"\$$", "", rx)
+    rx = rx.replace("/?", "").replace("\\.", ".")
+    return rx
+
+
+def extract_django(text: str, rel: str) -> list[Found]:
+    """URLconf routes (path/re_path/url) and DRF router.register, per file.
+
+    Prefixes added by an ``include()`` in another file are not visible here, so paths are relative to
+    the URLconf they are declared in.
+    """
+    if not re.search(r"urlpatterns|\.register\s*\(", text):
+        return []
+    # docstrings and comments hold example URLconfs (Django's urls.py template does): blank them, keep offsets
+    text = re.sub(r'(\"\"\"|\'\'\').*?\1', lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.S)
+    text = re.sub(r"(?m)#.*$", lambda m: " " * len(m.group(0)), text)
+    lines = _Lines(text)
+    out: list[Found] = []
+    for m in _DJ_CALL.finditer(text):
+        e = balanced(text, m.end() - 1)
+        if e < 0:
+            continue
+        args = text[m.end():e - 1]
+        parts = split_top(args)
+        if len(parts) < 2:
+            continue
+        view = parts[1].strip()
+        if view.startswith("include") or re.search(r"\.urls\b", view):
+            continue  # a mount, not an endpoint
+        route = _first_str_arg(args, ("route", "regex"))
+        if route is None:
+            continue
+        if m.group(1) == "path":
+            # verbatim, as the original inventory regex and recorded eval graphs name them
+            out.append(_route(rel, lines.of(m.start()), "ANY", route))
+        else:
+            out.append(_route(rel, lines.of(m.start()), "ANY", join_path(_django_regex_to_path(route))))
+    for m in _DJ_REGISTER.finditer(text):
+        e = balanced(text, m.end() - 1)
+        if e < 0:
+            continue
+        pref = _first_str_arg(text[m.end():e - 1], ("prefix",))
+        if pref:
+            out.append(_route(rel, lines.of(m.start()), "ANY", join_path(_django_regex_to_path(pref))))
+    out.sort(key=lambda f: f.line)
+    return out
+
+
 # ---------------------------------------------------------------- dispatch
 def extract_routes(rel: str, text: str) -> list[Found]:
     """Route facts for one file, or [] if no framework extractor applies. Never raises."""
@@ -502,7 +560,7 @@ def extract_routes(rel: str, text: str) -> list[Found]:
         if low.endswith(".java"):
             return extract_spring(text, rel)
         if low.endswith(".py"):
-            return extract_python_web(text, rel)
+            return extract_python_web(text, rel) + (extract_django(text, rel) if "urlpatterns" in text or ".register(" in text else [])
         if low.endswith(".cs"):
             return extract_aspnet(text, rel)
         if low.endswith("routes.rb") or "/routes/" in low and low.endswith(".rb"):

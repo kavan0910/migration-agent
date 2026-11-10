@@ -40,9 +40,12 @@ and 1 claims respectively, i.e. the evidence check is actively catching bad clai
 2. **Most nodes are static facts, not model output.** In spring-petclinic, 688 of 823 nodes are config keys from
    extraction; the model contributed a small number (the log shows 24 for the single chunk). The product's value
    depends on the model-derived layer (rules, flows), which is the thin part.
-3. **Likely under-extraction on the Django repo.** It shows 0 endpoints and 0 business rules, but that application exposes
-   a REST API with users, profiles, articles, comments and tags. Possible causes: the lite model, the single-chunk
-   prompt, or missing Django-REST route extraction. **[Unknown]**: needs a hand check against the source.
+3. **Django under-extraction: root cause found and fixed.** The django repo showed 0 endpoints because the static route
+   extractor had no Django URLconf support (only Spring, Flask/FastAPI, Rails, ASP.NET, Express and a single-line
+   `path()` regex). It missed `url(r'^...')` and DRF `router.register`. Added `extract_django` (with tests, and
+   docstring/comment example filtering). After the fix the same repo yields 11 routes from static analysis alone,
+   matching the application's API surface. Cross-file `include()` prefixes (`/api/`) are still not resolved.
+   0 business rules from the lite model remains unexplained.
 4. **Confidence is low almost everywhere.** Either the evidence bar is strict (good for trust) or the model is not
    supplying strong evidence (bad for usefulness). Needs a sample review to tell which.
 5. **Everything ran as 1 chunk.** Chunking, cross-reference resolution, parallelism and rate-limit behaviour at scale
