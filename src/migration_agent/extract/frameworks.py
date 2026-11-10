@@ -104,7 +104,7 @@ _STR_RE = re.compile(_STR)
 
 
 def _strs(s: str) -> list[str]:
-    return [a if a is not None else b for a, b in _STR_RE.findall(s)]
+    return [a or b for a, b in _STR_RE.findall(s)]
 
 
 def _first_str_arg(args: str, keys: tuple[str, ...] = ("path", "rule", "value")) -> str | None:

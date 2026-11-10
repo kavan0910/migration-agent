@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .extract.django_mounts import apply_django_prefix, django_mount_prefixes
 from .extract.express_mounts import apply_prefix, mount_prefixes
 from .extract.frameworks import extract_routes
 from .extract.schemas import extract_schemas
@@ -90,7 +91,7 @@ def _routes(code: Path, files: list[str]) -> list[InventoryItem]:
         found = extract_routes(rel, text)
         out += [InventoryItem(id="", kind="route", name=f.name, file=f.file, line=f.line) for f in found]
         out += _legacy_routes(rel, text.splitlines(), {f.line for f in found})
-    return _apply_express_mounts(code, files, out)
+    return _apply_django_mounts(code, files, _apply_express_mounts(code, files, out))
 
 
 def _apply_express_mounts(code: Path, files: list[str], items: list[InventoryItem]) -> list[InventoryItem]:
@@ -106,6 +107,19 @@ def _apply_express_mounts(code: Path, files: list[str], items: list[InventoryIte
     if not prefixes:
         return items
     return [it.model_copy(update={"name": apply_prefix(it.name, prefixes[it.file])})
+            if it.kind == "route" and it.file in prefixes else it for it in items]
+
+
+def _apply_django_mounts(code: Path, files: list[str], items: list[InventoryItem]) -> list[InventoryItem]:
+    """Prefix Django route names with the path of the include() chain that reaches their urls file."""
+    texts = {}
+    for f in files:
+        if f.endswith(".py") and (t := _read(code / f)) is not None and "urlpatterns" in t:
+            texts[f] = t
+    prefixes = django_mount_prefixes(texts) if len(texts) > 1 else {}
+    if not prefixes:
+        return items
+    return [it.model_copy(update={"name": apply_django_prefix(it.name, prefixes[it.file])})
             if it.kind == "route" and it.file in prefixes else it for it in items]
 
 
