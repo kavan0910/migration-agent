@@ -6,6 +6,8 @@ export interface User {
   id: string;
   email: string;
   name?: string | null;
+  /** What the backend sends; the client copies it to `name`. */
+  display_name?: string | null;
 }
 export interface TokenResponse {
   access_token: string;
@@ -22,6 +24,7 @@ export interface Member {
   user_id: string;
   email: string;
   name?: string | null;
+  display_name?: string | null;
   role: Role;
   created_at?: string;
 }
@@ -159,8 +162,8 @@ export interface GraphDiff {
   added_nodes: GraphNode[];
   removed_nodes: GraphNode[];
   changed_nodes: GraphNode[];
-  added_edges?: GraphEdge[];
-  removed_edges?: GraphEdge[];
+  added_edges?: GraphEdge[] | number;
+  removed_edges?: GraphEdge[] | number;
 }
 export interface DocumentResponse {
   markdown: string;
@@ -178,6 +181,12 @@ export interface Resolution {
   note: string;
   author?: string | null;
   at?: string;
+  created_at?: string;
+}
+export interface ResolveResult {
+  resolution: Resolution | null;
+  run: Run | null;
+  run_denied_reason: string | null;
 }
 export interface Finding {
   id: string;
@@ -201,11 +210,12 @@ export interface UsageTotals {
   input_tokens: number;
   output_tokens: number;
   runs: number;
+  events?: number;
 }
 export interface UsageRun {
   run_id: string;
   project_id: string;
-  project_name?: string;
+  project_name?: string | null;
   type: RunType;
   usd: number;
   input_tokens: number;
@@ -213,6 +223,7 @@ export interface UsageRun {
   at: string;
 }
 export interface Usage {
+  by_run?: UsageRun[];
   from?: string | null;
   to?: string | null;
   totals: UsageTotals;

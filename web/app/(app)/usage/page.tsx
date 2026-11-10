@@ -8,8 +8,15 @@ import { Card, ErrorState, LoadingBlock, PageHeader, Select, cx } from "@/compon
 
 const LIMIT_LABELS: Record<string, string> = {
   monthly_usd: "Monthly model spend", projects: "Projects", max_lines_per_project: "Lines per project", concurrent_runs: "Concurrent runs", members: "Members",
+  max_projects: "Projects", max_members: "Members", max_runs_per_month: "Runs this month", max_concurrent_runs: "Concurrent runs",
+  max_usd_per_run: "Spend cap per run", monthly_usd_budget: "Monthly model spend", max_source_mb: "Source size (MB)",
 };
-const isMoney = (k: string) => k.endsWith("_usd");
+/** The backend names limits `max_*` and consumption counters differently; this maps one to the other. */
+const CONSUMED_AS: Record<string, string> = {
+  max_projects: "projects", max_members: "members", max_runs_per_month: "runs_this_month",
+  max_concurrent_runs: "active_runs", monthly_usd_budget: "usd_this_month",
+};
+const isMoney = (k: string) => k.endsWith("_usd") || k.endsWith("_usd_budget") || k.endsWith("usd_per_run");
 
 export default function UsagePage() {
   const { workspace } = useAuth();
@@ -49,7 +56,7 @@ export default function UsagePage() {
           <Card>
             <ul className="divide-y divide-line">
               {Object.entries(ent.data.limits).map(([k, limit]) => {
-                const used = ent.data!.consumption[k] ?? 0;
+                const used = ent.data!.consumption[CONSUMED_AS[k] ?? k] ?? 0;
                 const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
                 const fmt = (n: number) => (isMoney(k) ? usd(n) : num(n));
                 return (

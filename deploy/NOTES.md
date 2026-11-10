@@ -17,8 +17,8 @@
 
 ## Reconciled with backend/ (read at time of writing; backend routers and app.main were not yet present)
 - Env names follow `backend/app/config.py` (`STORE_BACKEND`, `STORE_DIR`, `SCRATCH_DIR`, `MODEL_API_KEY`, `MODEL_API_BASE`, `PROFILE_*_MODEL`, `MAX_EXTRACTED_MB`, `GIT_ALLOWED_HOSTS`, `SIGNUP_ENABLED`, ...). `DATABASE_URL` uses `postgresql+psycopg://`; confirm the backend depends on psycopg 3.
-- Still assumed: ASGI app `app.main:app`, worker `python -m app.worker`, `/healthz` and `/readyz`, Alembic migrations (`backend/migrations/` exists, no `alembic.ini` seen), `TEST_DATABASE_URL` in backend tests, backend `[dev]` extra with ruff/mypy/pytest.
-- Smoke: signup returns `access_token` (or `token`); `GET /v1/workspaces` lists a default workspace (else creates one); project create 201, source upload multipart field `file` 201, delete 204.
+- Verified against the running backend (see `scripts/e2e_local.sh`): the ASGI entrypoint is the factory `app.main:app_factory` (`--factory`; there is no `app` object), worker `python -m app.worker`, `/healthz` and `/readyz` (200 `{status}`), Alembic via `backend/alembic.ini` + `backend/migrations` (now copied to `/app` in the image; the api command runs `alembic upgrade head` before uvicorn). Still assumed: `TEST_DATABASE_URL` in backend tests, backend `[dev]` extra with ruff/mypy/pytest.
+- Smoke (field names confirmed: signup 201 `access_token`, `GET /v1/workspaces` `items[0].id` is the default workspace created at signup, upload field `file` 201, passwords >= 10 chars): `GET /v1/workspaces` lists a default workspace (else creates one); project create 201, source upload multipart field `file` 201, delete 204.
 - Web: `web/` has no `public/` dir (Dockerfile creates one); `next start` with production node_modules (no `output: standalone`); scripts lint/typecheck/test/build exist.
 - Default model profiles are Gemini, so `MODEL_ENDPOINT_HOST` defaults to `generativelanguage.googleapis.com`; change both together.
 

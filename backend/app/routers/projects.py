@@ -17,7 +17,7 @@ from .. import audit, engine as engine_mod
 from ..billing import can_start_run, check_count_limit, effective_limits
 from ..errors import ApiError, not_found
 from ..materialize import (latest_source, limits_from, materialize_for_estimate)
-from ..models import Project, Run, Source, UserDoc
+from ..models import Project, Resolution, Run, Source, UserDoc
 from ..profiles import PROFILES, engine_config
 from ..safety import UnsafeInput, extract_archive, sanitize_filename, validate_git_url
 from ..serializers import Page, project_out, source_out, user_doc_out
@@ -47,9 +47,20 @@ class EstimateIn(BaseModel):
     incremental: bool = False
 
 
-def _detail(db: Session, p: Project) -> dict:
+def _detail(db: Session, p: Project, store=None) -> dict:
     last = db.scalar(select(Run).where(Run.project_id == p.id).order_by(Run.created_at.desc()).limit(1))
-    return project_out(p, latest_source(db, p.id), last)
+    nodes = open_f = None
+    if store is not None:
+        from ..services import results as res
+        vs = res.versions(store, p)
+        if vs:
+            nodes = int(vs[-1].get("node_count", vs[-1].get("nodes", 0)) or 0)
+            rs = res.read_json(store, p, "review_state.json", {}) or {}
+            fl = (rs.get("findings") or {}).get("findings", [])
+            done = {r.finding_id for r in db.scalars(select(Resolution).where(Resolution.project_id == p.id))}
+            done |= {r.get("finding_id") for r in (rs.get("resolutions") or {}).get("resolutions", [])}
+            open_f = sum(1 for f in fl if f.get("id") not in done)
+    return project_out(p, latest_source(db, p.id), last, nodes, open_f)
 
 
 @router.post("/v1/workspaces/{wid}/projects", status_code=201)
@@ -69,18 +80,18 @@ def create_project(body: ProjectIn, ctx: WorkspaceCtx = Depends(workspace_ctx)):
 
 
 @router.get("/v1/workspaces/{wid}/projects")
-def list_projects(page: Page = Depends(), ctx: WorkspaceCtx = Depends(workspace_ctx)):
+def list_projects(request: Request, page: Page = Depends(), ctx: WorkspaceCtx = Depends(workspace_ctx)):
     db = ctx.db
     cond = Project.workspace_id == ctx.workspace.id
     total = db.scalar(select(func.count()).select_from(Project).where(cond))
     rows = db.scalars(select(Project).where(cond).order_by(Project.created_at.desc(), Project.id)
                       .limit(page.limit).offset(page.offset)).all()
-    return {"items": [_detail(db, p) for p in rows], "total": total}
+    return {"items": [_detail(db, p, request.app.state.store) for p in rows], "total": total}
 
 
 @router.get("/v1/projects/{pid}")
-def get_project(ctx: ProjectCtx = Depends(project_ctx)):
-    return _detail(ctx.db, ctx.project)
+def get_project(request: Request, ctx: ProjectCtx = Depends(project_ctx)):
+    return _detail(ctx.db, ctx.project, request.app.state.store)
 
 
 @router.patch("/v1/projects/{pid}")

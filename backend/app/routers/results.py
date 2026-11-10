@@ -45,7 +45,8 @@ def graph(request: Request, version: int | None = Query(None, ge=0), type: str |
 
 @router.get("/v1/projects/{pid}/graph/versions")
 def graph_versions(request: Request, ctx: ProjectCtx = Depends(project_ctx)):
-    vs = res.versions(_store(request), ctx.project)
+    vs = [{**v, "node_count": v.get("node_count", v.get("nodes", 0)), "edge_count": v.get("edge_count", v.get("edges", 0))}
+          for v in res.versions(_store(request), ctx.project)]
     return {"items": vs, "total": len(vs)}
 
 
@@ -64,7 +65,10 @@ def graph_node(nid: str, request: Request, version: int | None = Query(None, ge=
     if node is None:
         raise not_found("node")
     edges = [e for e in snap.get("edges", []) if e.get("source") == nid or e.get("target") == nid]
-    return {"version": snap.get("version", 0), "node": node, "edges": edges}
+    by_id = {n.get("id"): n for n in snap.get("nodes", [])}
+    nb_ids = {x for e in edges for x in (e.get("source"), e.get("target"))} - {nid}
+    return {"version": snap.get("version", 0), "node": node, "edges": edges,
+            "neighbours": [by_id[i] for i in sorted(nb_ids) if i in by_id]}
 
 
 @router.get("/v1/projects/{pid}/document")
@@ -191,7 +195,9 @@ def list_comments(item_id: str | None = None, page: Page = Depends(), ctx: Proje
 def add_comment(body: CommentIn, request: Request, ctx: ProjectCtx = Depends(project_ctx)):
     ctx.require("member")
     rs = _review_state(request, ctx)
-    if body.item_id not in set(rs.get("known_ids") or []):
+    # comments attach to graph/doc ids and to finding ids (the findings page threads discussion on the finding)
+    commentable = set(rs.get("known_ids") or []) | {f.get("id") for f in (rs.get("findings") or {}).get("findings", [])}
+    if body.item_id not in commentable:
         raise not_found("item")
     p = ctx.project
     c = Comment(workspace_id=p.workspace_id, project_id=p.id, item_id=body.item_id, text=body.text.strip(),

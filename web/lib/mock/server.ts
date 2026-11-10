@@ -294,7 +294,7 @@ route("GET", "/healthz", () => ok({ status: "ok" }), true);
 route("POST", "/v1/auth/signup", (r) => {
   const { email, password, name } = body<{ email?: string; password?: string; name?: string }>(r);
   if (!/^\S+@\S+\.\S+$/.test(text(email))) return err(422, "validation_error", "Enter a valid email address.");
-  if (!password || password.length < 8) return err(422, "validation_error", "Password must be at least 8 characters.");
+  if (!password || password.length < 10) return err(422, "validation_error", "Password must be at least 10 characters.");
   if (S().users.some((u) => u.email.toLowerCase() === text(email).toLowerCase())) return err(409, "email_taken", "An account with this email already exists.");
   const u: MockUser = { id: crypto.randomUUID(), email: text(email), name: text(name) || null, password };
   S().users.push(u);

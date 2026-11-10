@@ -31,8 +31,8 @@ function FindingCard({ f, projectId, onChanged }: { f: Finding; projectId: strin
     if (!status) return;
     setBusy(true);
     try {
-      const updated = await api.review.resolve(projectId, f.id, status, note);
-      onChanged(updated);
+      const out = await api.review.resolve(projectId, f.id, status, note);
+      onChanged({ ...f, resolution: out.resolution });
       setStatus(null); setNote("");
       toast(status === "needs_reanalysis" || status === "accepted_doc" ? "Saved. A re-analysis run was queued; follow it on the Overview tab." : "Saved");
     } catch (err) {
@@ -72,7 +72,7 @@ function FindingCard({ f, projectId, onChanged }: { f: Finding; projectId: strin
       )}
 
       {res && (
-        <div className="mt-4"><Notice tone="ok" title={`Resolved: ${LABEL[res.status] ?? res.status}`}>{res.note || "No note."}<span className="mt-1 block text-xs text-muted">{res.author ?? "someone"} · {relTime(res.at)}</span></Notice></div>
+        <div className="mt-4"><Notice tone="ok" title={`Resolved: ${LABEL[res.status] ?? res.status}`}>{res.note || "No note."}<span className="mt-1 block text-xs text-muted">{res.author ?? "someone"} · {relTime(res.created_at ?? res.at)}</span></Notice></div>
       )}
 
       <form onSubmit={resolve} className="mt-5 space-y-3 border-t border-line pt-4">

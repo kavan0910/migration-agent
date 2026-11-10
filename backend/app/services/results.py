@@ -54,7 +54,8 @@ def diff(a: dict, b: dict) -> dict:
     ea = {e["id"]: e for e in a.get("edges", [])}
     eb = {e["id"]: e for e in b.get("edges", [])}
     names = {k: v.get("name", "") for k, v in {**na, **nb}.items()}
-    row = lambda ids: [{"id": i, "name": names.get(i, "")} for i in sorted(ids)]  # noqa: E731
+    types = {k: v.get("type", "") for k, v in {**na, **nb}.items()}
+    row = lambda ids: [{"id": i, "name": names.get(i, ""), "type": types.get(i, "")} for i in sorted(ids)]  # noqa: E731
     return {"a": a.get("version"), "b": b.get("version"),
             "added_nodes": row(set(nb) - set(na)), "removed_nodes": row(set(na) - set(nb)),
             "changed_nodes": row(i for i in set(na) & set(nb) if na[i] != nb[i]),

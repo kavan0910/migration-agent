@@ -20,7 +20,7 @@
 - User docs upload UI (`/user-docs` endpoints exist in the contract but no page uses them yet). Changelog endpoint is typed but not surfaced.
 - Role-based UI hiding is partial (viewer cannot create/delete, only admins see audit log); the server remains the authority.
 
-## Assumptions where the contract is silent (confirm with stream B)
+## Assumptions where the contract is silent (SUPERSEDED: the final shapes are in docs/platform-contract.md, "Response shapes"; `lib/api.ts` normalises the few differences: display_name, by_run, text/markdown documents, resolve result, SSE `id`/`end`)
 - Graph list response: `{version,total,nodes|items,edges}`; the client accepts either `nodes` or `items`. Edges are those among the returned nodes.
   Order is server defined; the mock sorts by degree.
 - `GET .../graph/nodes/{nid}` returns `{node,edges,neighbours}`. `.../graph/versions` returns `{items:[{version,node_count,edge_count,created_at}],total}`.

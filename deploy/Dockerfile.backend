@@ -32,7 +32,9 @@ RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
       "$(ls /wheels/migration_agent-*.whl)[llm]" /wheels/*backend*.whl \
  && rm -rf /root/.cache
 WORKDIR /app
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 USER 10001:10001
 EXPOSE 8000
-# Default command is the API; the worker overrides it (python -m app.worker). Health is probed by compose.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# Default command is the API (app factory; migrations are run by the compose command via alembic.ini/migrations in /app); the worker overrides it (python -m app.worker). Health is probed by compose.
+CMD ["uvicorn", "app.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

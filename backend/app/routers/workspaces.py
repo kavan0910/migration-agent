@@ -12,8 +12,8 @@ from .. import audit
 from ..billing import check_count_limit, consumption, effective_limits
 from ..deps import current_user, get_db
 from ..errors import ApiError, forbidden, not_found
-from ..models import AuditLog, Membership, UsageEvent, User, Workspace
-from ..serializers import Page, audit_out, member_out, workspace_out
+from ..models import AuditLog, Membership, Project, Run, UsageEvent, User, Workspace
+from ..serializers import Page, audit_out, iso, member_out, workspace_out
 from ..services import accounts
 from ..tenancy import RANK, WorkspaceCtx, workspace_ctx
 
@@ -133,16 +133,19 @@ def usage(frm: str | None = Query(None, alias="from"), to: str | None = None, ct
     tot = db.execute(select(func.coalesce(func.sum(UsageEvent.input_tokens), 0), func.coalesce(func.sum(UsageEvent.output_tokens), 0),
                             func.coalesce(func.sum(UsageEvent.usd), 0.0), func.count()).where(*conds)).one()
     by_run = db.execute(select(UsageEvent.run_id, UsageEvent.project_id, func.sum(UsageEvent.input_tokens),
-                               func.sum(UsageEvent.output_tokens), func.sum(UsageEvent.usd))
+                               func.sum(UsageEvent.output_tokens), func.sum(UsageEvent.usd), func.max(UsageEvent.at))
                         .where(*conds).group_by(UsageEvent.run_id, UsageEvent.project_id)
                         .order_by(func.sum(UsageEvent.usd).desc()).limit(500)).all()
+    run_types = dict(db.execute(select(Run.id, Run.type).where(Run.workspace_id == ctx.workspace.id)).all())
+    proj_names = dict(db.execute(select(Project.id, Project.name).where(Project.workspace_id == ctx.workspace.id)).all())
     by_model = db.execute(select(UsageEvent.model, func.sum(UsageEvent.input_tokens), func.sum(UsageEvent.output_tokens),
                                  func.sum(UsageEvent.usd)).where(*conds).group_by(UsageEvent.model)).all()
     return {"from": lo and lo.isoformat(), "to": hi and hi.isoformat(),
             "totals": {"input_tokens": int(tot[0]), "output_tokens": int(tot[1]), "usd": round(float(tot[2]), 6),
-                       "events": tot[3]},
-            "by_run": [{"run_id": r, "project_id": p, "input_tokens": int(i or 0), "output_tokens": int(o or 0),
-                        "usd": round(float(u or 0), 6)} for r, p, i, o, u in by_run],
+                       "events": tot[3], "runs": len(by_run)},
+            "by_run": [{"run_id": r, "project_id": p, "project_name": proj_names.get(p), "type": run_types.get(r, "analyze"),
+                        "input_tokens": int(i or 0), "output_tokens": int(o or 0),
+                        "usd": round(float(u or 0), 6), "at": iso(at)} for r, p, i, o, u, at in by_run],
             "by_model": [{"model": m, "input_tokens": int(i or 0), "output_tokens": int(o or 0),
                           "usd": round(float(u or 0), 6)} for m, i, o, u in by_model]}
 

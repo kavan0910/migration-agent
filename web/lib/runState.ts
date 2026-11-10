@@ -20,6 +20,7 @@ export const emptyRunLive = (): RunLive => ({
 });
 
 const MAX_LOGS = 200;
+const KNOWN_STATUS: readonly string[] = ["queued", "running", "succeeded", "failed", "stopped_budget", "cancelled"];
 
 /** Pure reducer; ignores events already seen (replay after reconnect) using `seq` when present. */
 export function reduceRunEvent(s: RunLive, e: RunEvent): RunLive {
@@ -41,6 +42,8 @@ export function reduceRunEvent(s: RunLive, e: RunEvent): RunLive {
       next.logs = [...s.logs, { level: e.level, message: e.message }].slice(-MAX_LOGS);
       return next;
     case "status":
+      // The server also sends non-terminal markers ("retrying", "cancel_requested"); keep the last real status.
+      if (!KNOWN_STATUS.includes(e.status)) return s;
       next.status = e.status;
       next.error = e.error ?? null;
       return next;

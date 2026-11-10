@@ -86,6 +86,54 @@ A resource of another workspace is always answered with **404**, never 403, to a
 
 `model_profile` maps server-side to engine model configs; customers never choose raw model ids.
 
+### Response shapes (verified end to end by `scripts/e2e_local.sh` and a real-mode browser run)
+
+All timestamps ISO-8601 UTC. Errors always `{"error":{"code","message"}}`; validation failures are 422 `invalid_request`,
+unsafe sources 422 `invalid_source`, plan limits 403 `entitlement_denied`, missing prerequisites 409 (`no_source`,
+`no_analysis`, `run_in_progress`), oversized bodies 413. Lists take `limit` (1..200, default 50) and `offset`.
+
+* **Auth.** `POST /v1/auth/signup` body `{email, password (10..256 chars), display_name?}` returns 201, `POST /v1/auth/login`
+  body `{email, password}` returns 200; both answer `{access_token, token_type:"bearer", expires_in, user}`. Signup creates
+  a default workspace (owner). `user` = `{id, email, display_name, created_at}`. `GET /v1/me` = user fields plus
+  `workspaces:[{id,name,role,created_at}]`. The web client copies `display_name` to `name`.
+* **Workspace** `{id, name, created_at, role}`. **Member** `{user_id, email, display_name, role, created_at}`;
+  `POST .../members` body `{email, role}` (the user must already have an account) returns 201 with a member.
+* **Project** `{id, workspace_id, name, description, created_at, updated_at, source, estimate, last_run, source_kind
+  ("none"|"git"|"upload"), source_ref, last_run_status, node_count, open_findings}`. `node_count` and `open_findings` are
+  `null` until the first successful run. Create body `{name, description?}`; PATCH `{name?, description?}`; DELETE 204.
+* **Source.** `POST /v1/projects/{pid}/source`, 201, answers the *source* (not the project):
+  `{id, kind:"git"|"upload", git_url, sha256, bytes, file_count, created_at}`. Upload is `multipart/form-data` with the single
+  field `file` (zip, tar.gz); git is JSON `{git_url}` (https only, public hosts, port 443). A new source replaces the old
+  one and clears the stored estimate. `GET` returns the same shape (404 when none).
+* **Estimate** (200, synchronous) `{chunks, usd, allowed, reason}`; body `{model_profile?, max_usd?, incremental?}`.
+* **Run** `{id, project_id, workspace_id, type, status, model_profile, max_usd, incremental, cost_usd, estimate_usd,
+  engine_version, error, current_stage, completed_stages, cancel_requested, created_at, started_at, finished_at}`.
+  `POST .../runs` answers 202 (200 when an `Idempotency-Key` replays an existing run).
+* **SSE** `GET /v1/runs/{rid}/events` (`Authorization: Bearer`, read with fetch streaming; `?after=<seq>` or
+  `Last-Event-ID` replays). Each message is `id: <seq>`, `event: <type>`, `data: <json payload without "type">`. Types:
+  `status` (`{status}` where status is `running`, `retrying`, `cancel_requested`, a terminal status, ...),
+  `stage` (`{stage, status:"started"|"done"}`), `progress` (`{stage, done, total}`),
+  `usage` (`{stage, task, model, input_tokens, output_tokens, usd}`), `log` (`{level, message}`), and a final
+  `event: end` with `{status}` (the run's terminal status). Comment lines `: ping` are heartbeats.
+* **Graph** `GET .../graph` = `{version, total, items:[node], edges:[edge touching returned nodes]}` (`items` = the page;
+  `total` = matches before paging). Node `{id, type, name, module, qualified_symbol, responsibility, evidence:[{file,
+  line_start, line_end, symbol, quote}], quirk, suspected_bug, confidence}`. Node detail `{version, node, edges, neighbours}`.
+  Versions `{items:[{version, node_count, edge_count}], total}`. Diff `{a, b, added_nodes, removed_nodes, changed_nodes:
+  [{id, name, type}], added_edges, removed_edges, changed_edges (counts)}`.
+* **Document / changelog** answer `text/markdown` (plain body, not JSON); 404 until a run produced one. Export is a
+  download (`Content-Disposition`); `format=json` is `{project, graph, versions, findings}`.
+* **Finding** (the engine review shape) `{id, kind, severity, title, detail, item_ids, quotes:[{source, text, anchor,
+  verified}], area, resolution, comment_count}`; `resolution` is `null` or `{status, note, author, created_at}`.
+  `POST .../findings/{fid}/resolution` body `{status, note?, model_profile?, max_usd?}` answers 201
+  `{resolution, run, run_denied_reason}`; `run` is the queued `reanalyze` run for `needs_reanalysis`/`accepted_doc`.
+* **Comment** `{id, item_id, text, author, author_id, created_at}`; `item_id` is a graph/doc id or a finding id.
+* **Usage** `{from, to, totals:{input_tokens, output_tokens, usd, events, runs}, by_run:[{run_id, project_id, project_name,
+  type, input_tokens, output_tokens, usd, at}], by_model:[...]}`. **Entitlements** `{plan, limits:{max_projects, max_members,
+  max_runs_per_month, max_concurrent_runs, max_usd_per_run, monthly_usd_budget, max_source_mb}, consumption:{projects,
+  members, runs_this_month, active_runs, usd_this_month}}`. **Audit** item `{id, workspace_id, actor, action, target, at, meta}`.
+* **CORS.** Set `CORS_ORIGINS` (comma list) to the web origin; allowed methods GET/POST/PATCH/DELETE, headers
+  `Authorization, Content-Type, Idempotency-Key`, no credentials (bearer tokens only).
+
 ## 4. Data model (stream B, Postgres in production, SQLite in tests)
 
 workspaces, users, memberships(role), projects, sources, user_docs, runs(status, type, profile, max_usd,

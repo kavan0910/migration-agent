@@ -7,7 +7,7 @@ import { tokenStore } from "./token";
 import type {
   ApiErrorBody, AuditEntry, Comment, DocumentResponse, Entitlements, Estimate, EstimateRequest, Finding,
   GraphDiff, GraphEdge, GraphNode, GraphPage, GraphQuery, GraphVersion, ListResponse, Member, NodeDetail,
-  Project, ResolutionStatus, Role, Run, RunEvent, RunRequest, TokenResponse, Usage, User, Workspace,
+  Project, ResolutionStatus, ResolveResult, Role, Run, RunEvent, RunRequest, TokenResponse, Usage, User, Workspace,
 } from "./types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
@@ -93,8 +93,21 @@ async function request<T>(method: string, path: string, opts: Opts = {}): Promis
   }
   const text = await res.text();
   if (!res.ok) throw parseErrorBody(res.status, text);
-  return (text ? JSON.parse(text) : undefined) as T;
+  if (!text) return undefined as T;
+  // Document/changelog endpoints answer text/markdown; everything else is JSON.
+  if (!(res.headers.get("content-type") ?? "").includes("json")) return text as unknown as T;
+  return JSON.parse(text) as T;
 }
+
+/** The backend names the display name `display_name`; the UI uses `name`. */
+function normUser<T extends { display_name?: string | null; name?: string | null }>(u: T): T {
+  return u && u.name == null && u.display_name != null ? { ...u, name: u.display_name } : u;
+}
+function normToken(t: TokenResponse): TokenResponse {
+  return t.user ? { ...t, user: normUser(t.user) } : t;
+}
+const asDoc = (raw: unknown): DocumentResponse =>
+  typeof raw === "string" ? { markdown: raw } : (raw as DocumentResponse);
 
 const enc = encodeURIComponent;
 const get = <T,>(p: string, query?: Query, signal?: AbortSignal) => request<T>("GET", p, { query, signal });
@@ -115,21 +128,27 @@ export const api = {
   health: () => get<{ status: string }>("/healthz"),
   auth: {
     signup: (email: string, password: string, name?: string) =>
-      post<TokenResponse>("/v1/auth/signup", { email, password, name }),
-    login: (email: string, password: string) => post<TokenResponse>("/v1/auth/login", { email, password }),
-    me: (signal?: AbortSignal) => get<User>("/v1/me", undefined, signal),
+      post<TokenResponse>("/v1/auth/signup", { email, password, name, display_name: name }).then(normToken),
+    login: (email: string, password: string) =>
+      post<TokenResponse>("/v1/auth/login", { email, password }).then(normToken),
+    me: (signal?: AbortSignal) => get<User>("/v1/me", undefined, signal).then(normUser),
   },
   workspaces: {
     list: () => get<ListResponse<Workspace>>("/v1/workspaces"),
     get: (wid: string) => get<Workspace>(`/v1/workspaces/${enc(wid)}`),
     create: (name: string) => post<Workspace>("/v1/workspaces", { name }),
-    members: (wid: string) => get<ListResponse<Member>>(`/v1/workspaces/${enc(wid)}/members`),
+    members: (wid: string) =>
+      get<ListResponse<Member>>(`/v1/workspaces/${enc(wid)}/members`).then((r) => ({ ...r, items: r.items.map(normUser) })),
     addMember: (wid: string, email: string, role: Role) =>
-      post<Member>(`/v1/workspaces/${enc(wid)}/members`, { email, role }),
+      post<Member>(`/v1/workspaces/${enc(wid)}/members`, { email, role }).then(normUser),
     removeMember: (wid: string, uid: string) =>
       request<void>("DELETE", `/v1/workspaces/${enc(wid)}/members/${enc(uid)}`),
     usage: (wid: string, range?: { from?: string; to?: string }) =>
-      get<Usage>(`/v1/workspaces/${enc(wid)}/usage`, range),
+      get<Usage & { by_run?: Usage["runs"] }>(`/v1/workspaces/${enc(wid)}/usage`, range).then((u) => ({
+        ...u,
+        totals: { ...u.totals, runs: u.totals.runs ?? u.by_run?.length ?? 0 },
+        runs: u.runs ?? u.by_run ?? [],
+      })),
     entitlements: (wid: string) => get<Entitlements>(`/v1/workspaces/${enc(wid)}/entitlements`),
     audit: (wid: string) => get<ListResponse<AuditEntry>>(`/v1/workspaces/${enc(wid)}/audit`),
   },
@@ -141,11 +160,11 @@ export const api = {
     rename: (pid: string, name: string) => request<Project>("PATCH", `/v1/projects/${enc(pid)}`, { body: { name } }),
     remove: (pid: string) => request<void>("DELETE", `/v1/projects/${enc(pid)}`),
     setGitSource: (pid: string, gitUrl: string) =>
-      post<Project>(`/v1/projects/${enc(pid)}/source`, { git_url: gitUrl }),
+      post<unknown>(`/v1/projects/${enc(pid)}/source`, { git_url: gitUrl }),
     uploadSource: (pid: string, file: File) => {
       const form = new FormData();
       form.append("file", file);
-      return request<Project>("POST", `/v1/projects/${enc(pid)}/source`, { form });
+      return request<unknown>("POST", `/v1/projects/${enc(pid)}/source`, { form });
     },
     estimate: (pid: string, req: EstimateRequest = {}) => post<Estimate>(`/v1/projects/${enc(pid)}/estimate`, req),
   },
@@ -164,13 +183,14 @@ export const api = {
   graph: {
     page: async (pid: string, q: GraphQuery = {}, signal?: AbortSignal) =>
       normaliseGraphPage(await get<Record<string, unknown>>(`/v1/projects/${enc(pid)}/graph`, { ...q }, signal)),
-    node: (pid: string, nid: string) => get<NodeDetail>(`/v1/projects/${enc(pid)}/graph/nodes/${enc(nid)}`),
+    node: (pid: string, nid: string) =>
+      get<NodeDetail>(`/v1/projects/${enc(pid)}/graph/nodes/${enc(nid)}`).then((d) => ({ ...d, neighbours: d.neighbours ?? [] })),
     versions: (pid: string) => get<ListResponse<GraphVersion>>(`/v1/projects/${enc(pid)}/graph/versions`),
     diff: (pid: string, a: number, b: number) => get<GraphDiff>(`/v1/projects/${enc(pid)}/graph/diff`, { a, b }),
   },
   results: {
-    document: (pid: string) => get<DocumentResponse>(`/v1/projects/${enc(pid)}/document`),
-    changelog: (pid: string) => get<DocumentResponse>(`/v1/projects/${enc(pid)}/changelog`),
+    document: (pid: string) => get<unknown>(`/v1/projects/${enc(pid)}/document`).then(asDoc),
+    changelog: (pid: string) => get<unknown>(`/v1/projects/${enc(pid)}/changelog`).then(asDoc),
     /** Absolute URL for a download; the browser must send the token, so use `exportBlob`. */
     exportBlob: async (pid: string, format: "md" | "json" | "html"): Promise<Blob> => {
       if (API_MOCK) {
@@ -188,8 +208,12 @@ export const api = {
   },
   review: {
     findings: (pid: string) => get<ListResponse<Finding>>(`/v1/projects/${enc(pid)}/findings`, { limit: 200 }),
-    resolve: (pid: string, fid: string, status: ResolutionStatus, note: string) =>
-      post<Finding>(`/v1/projects/${enc(pid)}/findings/${enc(fid)}/resolution`, { status, note }),
+    /** Backend answers `{resolution, run, run_denied_reason}`; the mock answers the updated Finding. */
+    resolve: async (pid: string, fid: string, status: ResolutionStatus, note: string): Promise<ResolveResult> => {
+      const raw = await post<Record<string, unknown>>(`/v1/projects/${enc(pid)}/findings/${enc(fid)}/resolution`, { status, note });
+      if ("title" in raw) return { resolution: (raw as unknown as Finding).resolution ?? null, run: null, run_denied_reason: null };
+      return raw as unknown as ResolveResult;
+    },
     comments: (pid: string, itemId?: string) =>
       get<ListResponse<Comment>>(`/v1/projects/${enc(pid)}/comments`, { item_id: itemId, limit: 200 }),
     comment: (pid: string, itemId: string, text: string) =>
@@ -217,7 +241,10 @@ async function streamRun(rid: string, onEvent: (e: RunEvent) => void, signal?: A
     for (const m of parser.push(value)) {
       try {
         const data = JSON.parse(m.data) as Record<string, unknown>;
-        onEvent((typeof data.type === "string" ? data : { ...data, type: m.event }) as unknown as RunEvent);
+        const seq = m.id !== undefined && /^\d+$/.test(m.id) ? { seq: Number(m.id) } : {};
+        // The server names the event in the SSE `event:` field; the final `end` event carries the terminal status.
+        const type = typeof data.type === "string" ? data.type : m.event === "end" ? "status" : m.event;
+        onEvent({ ...data, ...seq, type } as unknown as RunEvent);
       } catch {
         /* ignore malformed event */
       }

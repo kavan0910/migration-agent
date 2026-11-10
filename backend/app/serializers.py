@@ -39,8 +39,12 @@ def source_out(s: Source | None) -> dict | None:
             "file_count": s.file_count, "created_at": iso(s.created_at)}
 
 
-def project_out(p: Project, source: Source | None = None, last_run: Run | None = None) -> dict:
-    return {"id": p.id, "workspace_id": p.workspace_id, "name": p.name, "description": p.description,
+def project_out(p: Project, source: Source | None = None, last_run: Run | None = None,
+                node_count: int | None = None, open_findings: int | None = None) -> dict:
+    kind = source.kind if source else "none"
+    return {"source_kind": kind, "source_ref": (source.git_url if kind == "git" else (f"{source.file_count} files, {source.bytes} bytes" if source else None)),
+            "last_run_status": last_run.status if last_run else None, "node_count": node_count, "open_findings": open_findings,
+            "id": p.id, "workspace_id": p.workspace_id, "name": p.name, "description": p.description,
             "created_at": iso(p.created_at), "updated_at": iso(p.updated_at), "source": source_out(source),
             "estimate": p.estimate, "last_run": run_out(last_run) if last_run else None}
 

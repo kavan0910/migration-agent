@@ -51,7 +51,7 @@ def test_versions_diff_and_reanalysis_flow(alice, worker, analysed):
     vs = alice.get(f"/v1/projects/{analysed}/graph/versions").json()
     assert [v["version"] for v in vs["items"]] == [1, 2]
     d = alice.get(f"/v1/projects/{analysed}/graph/diff?a=1&b=2").json()
-    assert d["added_nodes"] == [{"id": "RULE-0001", "name": "rule v2"}] and d["removed_nodes"] == []
+    assert [(n["id"], n["name"]) for n in d["added_nodes"]] == [("RULE-0001", "rule v2")] and d["removed_nodes"] == []
     assert alice.get(f"/v1/projects/{analysed}/graph/diff?a=1&b=7").status_code == 404
     assert "reanalyzed" in alice.get(f"/v1/projects/{analysed}/changelog").text
     # engine received the resolution when the run was prepared
@@ -118,3 +118,17 @@ def test_html_export_is_sandboxed(alice, analysed, store, db):
         store.put(results_key(p, "graph.html"), b"<script>alert(1)</script>")
     r = alice.get(f"/v1/projects/{analysed}/export?format=html")
     assert r.status_code == 200 and "sandbox" in r.headers["content-security-policy"]
+
+
+def test_web_facing_shapes(alice, analysed):
+    """Fields the web client relies on (docs/platform-contract.md 'Response shapes')."""
+    p = alice.get(f"/v1/projects/{analysed}").json()
+    assert p["source_kind"] == "upload" and p["last_run_status"] == "succeeded" and p["node_count"] == 3
+    assert isinstance(p["open_findings"], int)
+    n = alice.get(f"/v1/projects/{analysed}/graph/nodes/EP-0001").json()
+    assert [x["id"] for x in n["neighbours"]] == ["COMP-0001"]
+    v = alice.get(f"/v1/projects/{analysed}/graph/versions").json()["items"][0]
+    assert v["node_count"] == 3 and "edge_count" in v
+    # comments may attach to a finding id as well as to graph ids
+    assert alice.post(f"/v1/projects/{analysed}/comments", json={"item_id": "F-0001", "text": "discuss"}).status_code == 201
+    assert alice.post(f"/v1/projects/{analysed}/comments", json={"item_id": "F-9999", "text": "x"}).status_code == 404

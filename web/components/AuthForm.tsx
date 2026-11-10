@@ -26,7 +26,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     e.preventDefault();
     const fe: typeof fieldErr = {};
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) fe.email = "Enter a valid email address.";
-    if (password.length < (mode === "signup" ? 8 : 1)) fe.password = mode === "signup" ? "Use at least 8 characters." : "Enter your password.";
+    if (password.length < (mode === "signup" ? 10 : 1)) fe.password = mode === "signup" ? "Use at least 10 characters." : "Enter your password.";
     setFieldErr(fe);
     if (fe.email || fe.password) return;
     setBusy(true);
@@ -56,7 +56,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             <Field label="Work email" htmlFor="email" error={fieldErr.email}>
               <Input id="email" type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} aria-invalid={!!fieldErr.email} aria-describedby={fieldErr.email ? undefined : undefined} />
             </Field>
-            <Field label="Password" htmlFor="password" error={fieldErr.password} hint={isLogin ? undefined : "At least 8 characters."}>
+            <Field label="Password" htmlFor="password" error={fieldErr.password} hint={isLogin ? undefined : "At least 10 characters."}>
               <Input id="password" type="password" autoComplete={isLogin ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!fieldErr.password} />
             </Field>
             {error && <Notice tone="danger">{error}</Notice>}
