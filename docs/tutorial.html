@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>migration-agent Tutorial</title>
+<style>
+:root{--bg:#fbfaf7;--panel:#fff;--ink:#1c1b22;--mute:#6b6a76;--line:#e7e4dc;--accent:#5b4bdb;--accent2:#e0568b;--tint:#efecff;--code:#15141c;--codefg:#e9e7f5;--ok:#1f9d6b}
+@media (prefers-color-scheme:dark){:root{--bg:#0f0e14;--panel:#17161f;--ink:#ecebf3;--mute:#9a98a8;--line:#2a2836;--accent:#9b8cff;--accent2:#ff7fac;--tint:#221f3a;--code:#0a0910;--codefg:#e9e7f5}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+.hero{padding:72px 24px 56px;text-align:center;background:radial-gradient(900px 340px at 50% -80px,var(--tint),transparent),var(--bg);border-bottom:1px solid var(--line)}
+.hero .tag{display:inline-block;padding:4px 12px;border:1px solid var(--line);border-radius:99px;font-size:13px;color:var(--mute);background:var(--panel)}
+.hero h1{font-size:clamp(34px,6vw,56px);line-height:1.1;margin:18px 0 12px;letter-spacing:-.02em;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{max-width:640px;margin:0 auto;color:var(--mute);font-size:18px}
+.layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px;max-width:1120px;margin:0 auto;padding:40px 24px 96px}
+nav{position:sticky;top:24px;align-self:start;font-size:14px}
+nav b{display:block;margin-bottom:8px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:12px}
+nav a{display:block;padding:6px 10px;border-left:2px solid var(--line);color:var(--mute);text-decoration:none}
+nav a:hover{color:var(--accent);border-color:var(--accent)}
+main{min-width:0}
+section{margin-bottom:56px}
+h2{font-size:30px;letter-spacing:-.01em;margin:0 0 16px;padding-top:8px}
+h2 .n{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:10px;border-radius:10px;background:var(--accent);color:#fff;font-size:16px;vertical-align:3px}
+h3{font-size:19px;margin:32px 0 8px}
+p{margin:0 0 14px}
+code{font:13.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--tint);padding:2px 6px;border-radius:6px}
+pre{background:var(--code);color:var(--codefg);padding:16px 18px;border-radius:14px;overflow:auto;margin:14px 0 18px;line-height:1.55;box-shadow:0 8px 24px -14px #0008}
+pre code{background:none;padding:0;color:inherit}
+.tw{overflow-x:auto;margin:14px 0 20px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);background:var(--tint)}
+tr:last-child td{border-bottom:0}
+ul,ol{padding-left:22px;margin:0 0 16px}li{margin:4px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}
+.card{padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.card b{display:block;margin-bottom:4px}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:20px 0}
+.flow span{padding:8px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-weight:600;font-size:14px}
+.flow i{color:var(--mute);font-style:normal}
+.flow span:last-of-type{background:var(--accent);color:#fff;border-color:var(--accent)}
+.note{padding:14px 18px;border-left:4px solid var(--accent);background:var(--tint);border-radius:0 12px 12px 0;margin:16px 0}
+footer{text-align:center;color:var(--mute);font-size:13px;padding:32px;border-top:1px solid var(--line)}
+@media(max-width:860px){.layout{grid-template-columns:1fr;gap:0}nav{display:none}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <span class="tag">Version 0.2.0 &middot; Complete tutorial</span>
+  <h1>migration-agent</h1>
+  <p>Read a legacy codebase without ever running it. Get an evidence-backed understanding document, a knowledge graph, and a blind check against your own docs.</p>
+</header>
+
+<div class="layout">
+<nav>
+  <b>On this page</b>
+  <a href="#what">What it is</a>
+  <a href="#setup">Install and set up</a>
+  <a href="#walkthrough">Walkthrough</a>
+  <a href="#review">The review loop</a>
+  <a href="#ops">Docker, safety, help</a>
+</nav>
+<main>
+
+<section id="what">
+<h2><span class="n">1</span>What it is</h2>
+<p>Every claim the tool makes cites a file, line range and a verbatim quote from your code, so you can check it. A second, <strong>blind Verifier</strong> then compares that document against your existing documentation, without seeing how the document was built, and flags where the two disagree. You review those disagreements in a local web UI.</p>
+<div class="cards">
+  <div class="card"><b>Read-only</b>It never executes or modifies the analysed code. Model access is limited to path-jailed read-only tools.</div>
+  <div class="card"><b>Secrets withheld</b>Credentials are withheld or redacted at ingest.</div>
+  <div class="card"><b>One folder of state</b>Everything lives in a single <code>&lt;name&gt;.migration</code> folder.</div>
+  <div class="card"><b>Bounded cost</b><code>--max-usd</code> caps spend; results are cached and runs resumable.</div>
+</div>
+<h3>The pipeline</h3>
+<div class="flow"><span>init</span><i>&rarr;</i><span>ingest</span><i>&rarr;</i><span>extract</span><i>&rarr;</i><span>analyze</span><i>&rarr;</i><span>verify</span><i>&rarr;</i><span>review</span></div>
+<div class="tw"><table>
+<tr><th>Stage</th><th>Command</th><th>What happens</th><th>Output</th></tr>
+<tr><td>1. Init</td><td><code>init</code></td><td>Creates the project folder for your source (path, zip, tarball or git URL)</td><td><code>project.json</code></td></tr>
+<tr><td>2. Ingest</td><td><code>ingest</code></td><td>Copies source into <code>code/</code>, withholds secrets</td><td><code>code/</code>, <code>ingest_report.json</code></td></tr>
+<tr><td>3. Extract</td><td><code>extract</code></td><td>Static facts: frameworks, schemas, specs, dependencies</td><td><code>facts/</code>, <code>inventory.json</code></td></tr>
+<tr><td>4. Analyze</td><td><code>analyze</code></td><td>LLM builds the graph and understanding doc, every claim with evidence</td><td><code>graph/</code>, <code>docs/</code></td></tr>
+<tr><td>5. Verify</td><td><code>verify</code></td><td>Blind Verifier compares the doc with <code>user_docs/</code></td><td><code>feedback/findings.json</code></td></tr>
+<tr><td>6. Review</td><td><code>review</code></td><td>Local UI to comment, accept, dismiss or re-analyse</td><td>resolutions, <code>docs/changelog.md</code></td></tr>
+</table></div>
+</section>
+
+<section id="setup">
+<h2><span class="n">2</span>Install and set up</h2>
+<p>You need Python 3.11 or newer and one model API key. Everything except the analysis and verify steps works without a key.</p>
+<pre><code>python -m venv .venv &amp;&amp; . .venv/bin/activate
+pip install ".[llm]"        # the [llm] extra adds LiteLLM for real model calls
+migration-agent --version   # migration-agent, version 0.2.0</code></pre>
+<p>For development: <code>pip install -e ".[dev,llm]"</code> then <code>PYTHONPATH=src python -m pytest -q</code> (576 tests pass).</p>
+<h3>API keys</h3>
+<p>Copy <code>.env.example</code> to <code>.env</code> and fill in a key. The CLI loads it at start-up and never overrides variables already set in your shell. <code>.env</code> is git-ignored; never commit it.</p>
+<div class="tw"><table>
+<tr><th>Variable</th><th>Provider</th></tr>
+<tr><td><code>ANTHROPIC_API_KEY</code></td><td>Claude models</td></tr>
+<tr><td><code>GEMINI_API_KEY</code> (or <code>GOOGLE_API_KEY</code>)</td><td>Gemini models</td></tr>
+<tr><td><code>OPENAI_API_KEY</code></td><td>OpenAI models</td></tr>
+</table></div>
+<div class="note">No key yet? Run <code>analyze --offline</code> to try the whole pipeline with a stand-in model.</div>
+<h3>Choosing models</h3>
+<p>The repo ships <code>gemini.config.json</code>, <code>gemini-flash3.config.json</code> and <code>gemini-lite.config.json</code>. Each maps five tasks (<code>chunk_extract</code>, <code>cross_ref</code>, <code>business_rules</code>, <code>gap_fill</code>, <code>verifier</code>) to a model and sets prices, retries and backoff. Pass one with <code>--config</code>.</p>
+<p>For containers and CI, <code>MA_*</code> variables override the file. Precedence, lowest to highest: built-in defaults, the <code>MA_LLM_CONFIG</code> file, then <code>MA_*</code> variables. An explicit CLI flag wins over all of them.</p>
+<div class="tw"><table>
+<tr><th>Variable</th><th>Effect</th></tr>
+<tr><td><code>MA_LLM_CONFIG</code></td><td>Path to a base config.json</td></tr>
+<tr><td><code>MA_LLM_MODEL</code></td><td>Default model</td></tr>
+<tr><td><code>MA_LLM_MODEL_&lt;TASK&gt;</code></td><td>Model for one task, e.g. <code>MA_LLM_MODEL_VERIFIER</code></td></tr>
+<tr><td><code>MA_LLM_API_BASE</code></td><td>Custom endpoint (proxy, Azure, Bedrock gateway)</td></tr>
+<tr><td><code>MA_LLM_MAX_RETRIES</code>, <code>MA_LLM_TIMEOUT</code>, <code>MA_LLM_MAX_OUTPUT_TOKENS</code></td><td>Retry and size limits</td></tr>
+<tr><td><code>MA_LLM_BACKOFF_BASE</code>, <code>MA_LLM_BACKOFF_MAX</code></td><td>Retry backoff in seconds</td></tr>
+<tr><td><code>MA_LLM_PRICE_DEFAULT</code></td><td>Fallback price as "in,out" USD per 1M tokens</td></tr>
+<tr><td><code>MA_MAX_USD</code></td><td>Hard budget, same as <code>--max-usd</code></td></tr>
+<tr><td><code>MA_LOG_LEVEL</code></td><td>DEBUG, INFO, WARNING, ERROR or CRITICAL</td></tr>
+</table></div>
+</section>
+
+<section id="walkthrough">
+<h2><span class="n">3</span>Walkthrough</h2>
+<p>Every command takes the project folder as its first argument and appends to <code>audit/audit.jsonl</code>. Run <code>migration-agent COMMAND --help</code> for the authoritative option list.</p>
+
+<h3>Step 1. Create the project</h3>
+<pre><code>migration-agent init ./legacy-orders
+# or a zip, tarball or git URL, with a custom location and name:
+migration-agent init https://example.com/team/orders.git --project ./orders.migration --name "Orders service"</code></pre>
+<p>Nothing is copied yet. The repo includes three sample projects to practise on: <code>django-lite.migration</code>, <code>express-crud.migration</code> and <code>spring-lite.migration</code>.</p>
+
+<h3>Step 2. Ingest the code</h3>
+<pre><code>migration-agent ingest legacy-orders.migration</code></pre>
+<p>Copies the source into <code>code/</code> with limits: 500 MB, 200,000 files, a compression-ratio cap of 100, git clones with hooks disabled. It skips symlinks, binaries, files over 1 MB and vendor or build folders (<code>.git</code>, <code>node_modules</code>, <code>vendor</code>, <code>build</code>, <code>dist</code>, <code>target</code>, virtualenvs). Credential files such as <code>.env</code>, <code>*.pem</code>, <code>id_rsa</code> and <code>.npmrc</code> are withheld entirely; secrets in other files become <code>[REDACTED:&lt;kind&gt;]</code>. Read <code>ingest_report.json</code> to see what was kept. If the source changes later, run <code>ingest --refresh</code>.</p>
+
+<h3>Step 3. Extract static facts</h3>
+<pre><code>migration-agent extract legacy-orders.migration</code></pre>
+<p>No model involved. tree-sitter pulls out AST facts, dependency manifests, configuration keys, routes and import edges into <code>facts/</code>, and writes <code>inventory.json</code>: the checklist of everything the analysis must account for.</p>
+
+<h3>Step 4. Plan, then analyze</h3>
+<pre><code>migration-agent analyze legacy-orders.migration --dry-run          # plan + cost estimate, no key needed
+migration-agent analyze legacy-orders.migration --config gemini.config.json --max-usd 3</code></pre>
+<p>Always dry-run first. The real run chunks the code, extracts per chunk with the model, merges, resolves cross-references, verifies each piece of evidence against <code>code/</code>, runs a business-rules pass and fills gaps for unmapped inventory items. It writes <code>docs/understanding.latest.md</code>, <code>docs/graph.html</code> and a new graph snapshot.</p>
+<div class="tw"><table>
+<tr><th>Option</th><th>Use it to</th></tr>
+<tr><td><code>--dry-run</code></td><td>Print the plan and estimated cost, then exit</td></tr>
+<tr><td><code>--max-usd N</code></td><td>Hard budget; stops gracefully and a re-run continues without paying twice</td></tr>
+<tr><td><code>--config FILE</code></td><td>Pick models and prices</td></tr>
+<tr><td><code>--workers N</code></td><td>Run N chunk calls in parallel; merge order stays deterministic</td></tr>
+<tr><td><code>--incremental</code></td><td>After <code>ingest --refresh</code>, re-analyse only changed chunks and dependents; IDs stay stable</td></tr>
+<tr><td><code>--offline</code></td><td>No model; a facts-level result, not a real analysis</td></tr>
+</table></div>
+<p><code>render PROJECT</code> builds a facts-only graph and document with no model, handy for checking extraction.</p>
+
+<h3>Step 5. Verify against your own docs</h3>
+<p>Put your existing docs (.md, .txt, .html, .docx, .pdf) in <code>user_docs/</code>, then:</p>
+<pre><code>migration-agent verify legacy-orders.migration --config gemini.config.json --max-usd 1</code></pre>
+<p>The Verifier sees only the generated document and your docs, never the code, and the analysis never saw your docs. That separation is why a disagreement means something. Each finding quotes both sides verbatim; findings whose quotes cannot be string-matched are dropped. Results go to <code>feedback/findings.json</code>.</p>
+<div class="tw"><table>
+<tr><th>Finding kind</th><th>Meaning</th></tr>
+<tr><td><code>contradiction</code></td><td>The docs and the code-derived document disagree</td></tr>
+<tr><td><code>doc_only</code></td><td>Documented, but not found in the code</td></tr>
+<tr><td><code>code_only</code></td><td>In the code, but undocumented</td></tr>
+<tr><td><code>doc_vs_doc</code></td><td>Your own docs disagree with each other</td></tr>
+</table></div>
+
+<h3>Step 6. Review</h3>
+<pre><code>migration-agent review legacy-orders.migration</code></pre>
+<p>Starts the local review UI and prints a URL with a one-time token. See the next section.</p>
+</section>
+
+<section id="review">
+<h2><span class="n">4</span>The review loop</h2>
+<p>Each disagreement becomes a recorded decision and, where needed, a targeted re-analysis, producing a new graph version and a changelog entry.</p>
+<h3>The review UI</h3>
+<pre><code>migration-agent review legacy-orders.migration --port 8765 --no-browser</code></pre>
+<p>It prints a URL like <code>http://127.0.0.1:8765/&lt;token&gt;/</code>. The UI shows the understanding document with coverage and confidence, the findings, graph versions and diffs. You can comment on any graph item and resolve findings.</p>
+<ul>
+<li>Binds to 127.0.0.1 only; do not forward the port.</li>
+<li>Every request needs an unguessable token, and the <code>Host</code> header is validated.</li>
+<li>Cross-origin POSTs are rejected; bodies are capped at 64 KB and texts at 5,000 characters.</li>
+<li>It can only write comments and resolutions, and cannot run inside a container.</li>
+</ul>
+<h3>Resolving from the command line</h3>
+<pre><code>migration-agent resolve orders.migration F-0001 --status accepted_doc --note "Discount is 25% from 10 items"
+migration-agent resolve orders.migration --comment RULE-0003 --note "Check the VIP exception in pricing.py"
+migration-agent resolve orders.migration F-0004 --status dismissed --no-reanalyze</code></pre>
+<div class="tw"><table>
+<tr><th>Status</th><th>Meaning</th><th>Re-analysis</th></tr>
+<tr><td><code>accepted_doc</code></td><td>Your documentation is right; the code-derived claim is wrong</td><td>Yes, affected nodes</td></tr>
+<tr><td><code>accepted_code</code></td><td>The code is the truth</td><td>No</td></tr>
+<tr><td><code>dismissed</code></td><td>Not a real problem</td><td>No</td></tr>
+<tr><td><code>needs_reanalysis</code></td><td>Re-check this area</td><td>Yes</td></tr>
+</table></div>
+<p>Your note goes to the model as untrusted data, and every resulting claim still needs verbatim code evidence. If a budget limit interrupts a re-analysis, nothing is written.</p>
+<h3>Stable IDs, versions and the changelog</h3>
+<p>Items get stable IDs such as <code>COMP-0001</code> and <code>RULE-0003</code> in <code>graph/registry.json</code>, so references survive re-analysis, and review patches persist across later <code>analyze</code> runs. Each analysis or resolution saves a snapshot in <code>graph/snapshots/</code>.</p>
+<pre><code>migration-agent changelog legacy-orders.migration   # writes docs/changelog.md
+migration-agent audit legacy-orders.migration --format json</code></pre>
+<h3>When the code changes</h3>
+<pre><code>migration-agent ingest legacy-orders.migration --refresh
+migration-agent analyze legacy-orders.migration --incremental --workers 4</code></pre>
+</section>
+
+<section id="ops">
+<h2><span class="n">5</span>Docker, safety, help</h2>
+<h3>Running in Docker</h3>
+<p>The image is a run-to-completion batch job: source mounted read-only, project folder read-write, non-root user 10001, read-only root filesystem, no baked-in secrets. Run the review UI on your host, not in the container.</p>
+<pre><code>docker build -f docker/Dockerfile --build-arg VERSION=0.2.0 -t migration-agent:0.2.0 .
+docker run --rm --read-only --tmpfs /tmp --network none migration-agent:0.2.0 --version</code></pre>
+<div class="tw"><table>
+<tr><th>Compose profile</th><th>Network</th><th>Use it for</th></tr>
+<tr><td><code>offline</code></td><td>None</td><td><code>init</code>, <code>ingest</code>, <code>extract</code>, <code>render</code>, <code>audit</code>, <code>changelog</code>, <code>analyze --offline</code></td></tr>
+<tr><td><code>model</code></td><td>Internal; one Squid proxy allows HTTPS to a single model host</td><td><code>analyze</code>, <code>verify</code>, <code>resolve</code></td></tr>
+</table></div>
+<pre><code>export REPO_DIR=$PWD/legacy-orders PROJECT_DIR=$PWD/orders.migration
+C="docker compose -f docker/docker-compose.yml"
+$C --profile offline run --rm worker-offline init /workspace --project /project --name orders
+$C --profile offline run --rm worker-offline ingest /project
+$C --profile offline run --rm worker-offline extract /project
+export ANTHROPIC_API_KEY=...        # or GEMINI_API_KEY; passed by name, never baked in
+$C --profile model run --rm worker analyze /project --max-usd 5</code></pre>
+
+<h3>The safety model</h3>
+<ul>
+<li><strong>Source is never executed or changed.</strong> Analysis reads only the <code>code/</code> copy.</li>
+<li><strong>Model tools are jailed</strong> to <code>read_file</code>, <code>list_dir</code>, <code>grep</code> and <code>file_stat</code> inside <code>code/</code>.</li>
+<li><strong>Secrets stay out of prompts</strong>: withheld at ingest, redacted from reports and findings.</li>
+<li><strong>Untrusted text stays data</strong>: code, user docs and reviewer notes cannot act as instructions.</li>
+<li><strong>Claims need evidence.</strong> No verifiable file, line and quote means low or no confidence and a spot in the blind-spots section.</li>
+<li><strong>Data leaves only to your configured model endpoint.</strong> Use <code>--offline</code> or a self-hosted gateway if that matters.</li>
+<li><strong>Keep <code>llm_cache/</code> private</strong>: it holds model responses derived from your code.</li>
+</ul>
+
+<h3>Controlling cost</h3>
+<ol>
+<li>Run <code>analyze --dry-run</code> and read the estimate.</li>
+<li>Set <code>--max-usd</code> (or <code>MA_MAX_USD</code>); runs stop gracefully and resume without repaying.</li>
+<li>Use <code>gemini-lite.config.json</code> for the cheapest runs, or a small model for <code>chunk_extract</code> and a stronger one for reasoning tasks.</li>
+<li>Set correct per-model prices, or estimates will be wrong.</li>
+<li>Check spend afterwards with <code>audit</code>.</li>
+</ol>
+
+<h3>Troubleshooting</h3>
+<div class="tw"><table>
+<tr><th>Symptom</th><th>Fix</th></tr>
+<tr><td><code>No LLM API key found</code></td><td>Export the key or put it in <code>.env</code>; or use <code>--offline</code> or <code>--dry-run</code></td></tr>
+<tr><td>macOS <code>Operation not permitted</code></td><td>Give your terminal access to Downloads, Desktop or Documents in System Settings, or move the project to <code>~/work</code></td></tr>
+<tr><td><code>429</code>, quota, <code>RESOURCE_EXHAUSTED</code></td><td>Use <code>gemini-lite.config.json</code>, raise <code>backoff_max</code>, or re-run later; finished chunks are not repeated</td></tr>
+<tr><td><code>503</code>, model overloaded</td><td>Retried automatically; if it persists the chunk is skipped and a re-run picks it up. Raise <code>MA_LLM_MAX_RETRIES</code> or switch model</td></tr>
+<tr><td>Run stopped on budget</td><td>Raise <code>--max-usd</code> and re-run; completed work is reused</td></tr>
+<tr><td>Many <code>unmapped</code> items</td><td>Check section 15 of <code>docs/understanding.latest.md</code> and exclusions in <code>ingest_report.json</code></td></tr>
+<tr><td>Low confidence or blind spots</td><td>Re-run with a stronger model for that task, or comment on the item and <code>resolve</code></td></tr>
+<tr><td><code>not a project folder</code></td><td>No <code>project.json</code>; run <code>init</code> first</td></tr>
+</table></div>
+
+<h3>Command cheat sheet</h3>
+<div class="tw"><table>
+<tr><th>Command</th><th>Needs a model?</th><th>Purpose</th></tr>
+<tr><td><code>init SOURCE</code></td><td>No</td><td>Create the project folder</td></tr>
+<tr><td><code>ingest PROJECT [--refresh]</code></td><td>No</td><td>Copy and sanitise the source</td></tr>
+<tr><td><code>extract PROJECT</code></td><td>No</td><td>Static facts and inventory</td></tr>
+<tr><td><code>render PROJECT</code></td><td>No</td><td>Facts-only graph and document</td></tr>
+<tr><td><code>analyze PROJECT</code></td><td>Yes (or <code>--offline</code>)</td><td>Build the graph and understanding doc</td></tr>
+<tr><td><code>verify PROJECT</code></td><td>Yes</td><td>Blind comparison with <code>user_docs/</code></td></tr>
+<tr><td><code>review PROJECT</code></td><td>No</td><td>Local review UI</td></tr>
+<tr><td><code>resolve PROJECT [ID]</code></td><td>Only for re-analysis</td><td>Record a decision or comment</td></tr>
+<tr><td><code>changelog PROJECT</code></td><td>No</td><td>Regenerate <code>docs/changelog.md</code></td></tr>
+<tr><td><code>audit PROJECT</code></td><td>No</td><td>Calls, tokens and cost log</td></tr>
+</table></div>
+<p>More detail lives next to this file: the user guide, architecture, API reference, deployment guide and threat model.</p>
+</section>
+
+</main>
+</div>
+<footer>migration-agent 0.2.0 &middot; tutorial</footer>
+</body>
+</html>
