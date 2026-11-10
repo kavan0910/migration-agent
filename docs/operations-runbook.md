@@ -12,7 +12,7 @@ alias dc='docker compose -f deploy/docker-compose.yml --env-file deploy/.env'
 
 First time:
 ```bash
-cp deploy/.env.example deploy/.env      # then set POSTGRES_PASSWORD, JWT_SECRET (openssl rand -hex 32), MODEL_API_KEY, MODEL_ENDPOINT_HOST
+cp deploy/.env.example deploy/.env      # then set POSTGRES_PASSWORD, MA_OWNER_PASSWORD, MA_APP_PASSWORD, JWT_SECRET (openssl rand -hex 32; the backend refuses placeholders and weak values in production), MODEL_API_KEY, MODEL_ENDPOINT_HOST, GIT_ALLOWED_HOSTS (worker git clones go through the egress proxy and only reach these hosts); signup is closed unless SIGNUP_ENABLED=true
 dc config -q                            # static validation
 dc up -d --build
 dc ps                                   # api, web, postgres should be "healthy"

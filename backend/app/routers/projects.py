@@ -27,7 +27,6 @@ from ..tenancy import ProjectCtx, WorkspaceCtx, project_ctx, workspace_ctx
 from ..services.runs import ACTIVE
 
 router = APIRouter()
-_estimate_slots = threading.BoundedSemaphore(2)
 DOC_EXTS = {".md", ".markdown", ".txt", ".rst", ".adoc", ".html", ".htm", ".pdf", ".docx", ".json", ".yaml", ".yml"}
 
 
@@ -110,7 +109,8 @@ def patch_project(body: ProjectPatch, ctx: ProjectCtx = Depends(project_ctx)):
 @router.delete("/v1/projects/{pid}", status_code=204)
 def delete_project(request: Request, ctx: ProjectCtx = Depends(project_ctx)):
     ctx.require("admin")
-    project_service.delete_project(ctx.db, request.app.state.store, ctx.project, ctx.user.id)
+    project_service.delete_project(ctx.db, request.app.state.store, ctx.project, ctx.user.id,
+                                   request.app.state.settings)
 
 
 # ------------------------------------------------------------------------------------------------ source
@@ -293,12 +293,15 @@ async def estimate(body: EstimateIn, request: Request, ctx: ProjectCtx = Depends
         raise ApiError(422, "invalid_request", f"model_profile must be one of {', '.join(PROFILES)}")
     if latest_source(ctx.db, ctx.project.id) is None:
         raise ApiError(409, "no_source", "upload a source archive or connect a git url first")
-    if not _estimate_slots.acquire(blocking=False):
+    # Slots are per workspace (a small number) AND globally capped, so one tenant cannot occupy every slot.
+    slots = request.app.state.estimate_slots
+    key = ctx.project.workspace_id
+    if not slots.try_acquire(key):
         raise ApiError(429, "rate_limited", "too many estimates in progress, retry shortly", {"Retry-After": "5"})
     try:
         return await run_in_threadpool(_estimate, request, ctx, body)
     finally:
-        _estimate_slots.release()
+        slots.release(key)
 
 
 def _estimate(request: Request, ctx: ProjectCtx, body: EstimateIn):

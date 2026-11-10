@@ -18,13 +18,22 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Settings
-from .safety import UnsafeInput, dir_size, strip_unsafe_tree, validate_git_url
+from .safety import UnsafeInput, check_tree, dir_size, strip_unsafe_tree, validate_git_url
+
+
+_PROXY_VARS = ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy")
 
 
 def _git_env(home: Path) -> dict[str, str]:
-    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "https",
-            "GIT_ASKPASS": "/bin/false", "LC_ALL": "C"}
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "https",
+           "GIT_ASKPASS": "/bin/false", "LC_ALL": "C"}
+    # The worker has no route to the internet except through the allowlisting egress proxy, so the clone MUST use it.
+    # (Only the https proxy variables are forwarded; nothing else from the service environment reaches git.)
+    for k in _PROXY_VARS:
+        if os.environ.get(k):
+            env[k] = os.environ[k]
+    return env
 
 
 def build_clone_args(settings: Settings, url: str, dest: Path, host: str, addrs: tuple[str, ...]) -> list[str]:
@@ -58,18 +67,27 @@ def clone_public_repo(url: str, dest: Path, settings: Settings,
             if time.monotonic() > deadline:
                 _kill(proc)
                 raise UnsafeInput("git clone timed out")
-            if dest.exists() and dir_size(dest)[0] > limit:
-                _kill(proc)
-                raise UnsafeInput("repository exceeds the size limit")
+            if dest.exists():
+                try:  # bounded, early-exit walks: a repository of millions of tiny files must not stall this loop
+                    check_tree(dest, settings.max_archive_entries, settings.max_tree_depth, 10.0)
+                except UnsafeInput:
+                    _kill(proc)
+                    raise
+                if dir_size(dest)[0] > limit:
+                    _kill(proc)
+                    raise UnsafeInput("repository exceeds the size limit")
         if rc != 0:
             raise UnsafeInput("git clone failed (repository not found or not public)")
         shutil.rmtree(dest / ".git", ignore_errors=True)
+        check_tree(dest, settings.max_archive_entries, settings.max_tree_depth)  # before any further walk of the tree
         strip_unsafe_tree(dest)
         size, files = dir_size(dest)
         if size > limit:
             raise UnsafeInput("repository exceeds the size limit")
         if files == 0:
             raise UnsafeInput("repository is empty")
+        if files > settings.max_archive_files:
+            raise UnsafeInput("repository contains too many files")
         return size, files
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)

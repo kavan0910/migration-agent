@@ -5,6 +5,7 @@ from typing import Iterator
 
 from fastapi import Depends, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .db import set_rls_context
@@ -24,11 +25,16 @@ def get_db(request: Request) -> Iterator[Session]:
 
 def client_ip(request: Request) -> str:
     st = request.app.state.settings
+    peer = request.client.host if request.client else "unknown"
     if st.trust_proxy_headers:
-        xff = request.headers.get("x-forwarded-for")
-        if xff:
-            return xff.split(",")[-1].strip()[:64]
-    return request.client.host if request.client else "unknown"
+        # X-Forwarded-For is "client, proxy1, proxy2": each trusted proxy appends the address it saw. With N trusted
+        # proxies the client is the Nth entry from the right; anything further left is attacker-supplied. If the
+        # header has fewer entries than proxies we expected, it did not come through the expected chain: use the peer.
+        parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+        n = max(1, st.trusted_proxy_count)
+        if len(parts) >= n:
+            return parts[-n][:64]
+    return peer
 
 
 def throttle(request: Request) -> None:
@@ -56,11 +62,19 @@ def _resolve_user(db: Session, ident: Identity, mode: str, request: Request) -> 
         if u is None:
             raise ApiError(401, "unauthorized", "unknown user")
         return u
-    u = db.scalar(select(User).where(User.external_id == ident.subject))
+    ext = ident.external_id()
+    u = db.scalar(select(User).where(User.external_id == ext))
     if u is None:
         from .services import accounts
-        u = accounts.create_oidc_user(db, ident)
-        db.commit()
+        st = request.app.state.settings
+        try:
+            u = accounts.create_oidc_user(db, ident, plan=st.default_plan, max_workspaces=st.max_workspaces_per_user)
+            db.commit()
+        except IntegrityError:  # concurrent first login of the same identity: the other request won, use its row
+            db.rollback()
+            u = db.scalar(select(User).where(User.external_id == ext))
+            if u is None:
+                raise ApiError(409, "conflict", "account creation conflict, retry") from None
     return u
 
 

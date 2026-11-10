@@ -29,7 +29,8 @@ from .storage import ObjectStore, StoreError, project_prefix, sha256_hex
 
 def limits_from(s: Settings) -> ArchiveLimits:
     return ArchiveLimits(max_bytes=s.max_extracted_mb * 1024 * 1024, max_file_bytes=s.max_file_mb * 1024 * 1024,
-                         max_files=s.max_archive_files, max_ratio=s.max_compression_ratio)
+                         max_files=s.max_archive_files, max_ratio=s.max_compression_ratio,
+                         max_entries=s.max_archive_entries, max_seconds=s.archive_timeout_s, max_depth=s.max_tree_depth)
 
 
 @contextmanager

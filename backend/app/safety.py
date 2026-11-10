@@ -7,6 +7,7 @@ import re
 import socket
 import stat
 import tarfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -25,7 +26,11 @@ _EXTRA_BLOCKED = [ipaddress.ip_network(n) for n in (
     "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4",
     "240.0.0.0/4", "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "64:ff9b::/96", "2001:db8::/32",
     "fd00:ec2::254/128",
+    # IPv4-compatible (::/96), IPv4-mapped (::ffff:0:0/96) and NAT64 (64:ff9b::/96, 64:ff9b:1::/48) forms embed an IPv4
+    # address that a dual-stack stack may route to a private host; there is no legitimate git server behind them.
+    "::/96", "::ffff:0:0/96", "::ffff:0:0:0/96", "64:ff9b:1::/48", "100::/64", "2002::/16",
 )]
+_HOST_CHARS = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
 _NUMERIC_TLD = re.compile(r"(0x[0-9a-f]*|[0-9]+)")
 _BAD_HOSTS = {"localhost", "metadata.google.internal", "metadata", "instance-data"}
 _BAD_SUFFIXES = (".localhost", ".local", ".internal", ".localdomain", ".home.arpa", ".lan", ".corp", ".intranet")
@@ -33,10 +38,7 @@ _BAD_SUFFIXES = (".localhost", ".local", ".internal", ".localdomain", ".home.arp
 
 def ip_is_public(ip: ipaddress._BaseAddress) -> bool:
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    if isinstance(ip, ipaddress.IPv6Address) and ip.sixtofour is not None:
-        if not ip_is_public(ip.sixtofour):
-            return False
+        return False  # IPv4-mapped addresses are never accepted (also listed in _EXTRA_BLOCKED)
     if not ip.is_global:
         return False
     return not any(ip in net for net in _EXTRA_BLOCKED if net.version == ip.version)
@@ -81,36 +83,49 @@ def validate_git_url(url: str, *, allowed_hosts: set[str] | None = None, resolve
         raise UnsafeInput("invalid git url host")
     if port not in (None, 443):
         raise UnsafeInput("only port 443 is allowed")
-    if parts.fragment:
-        raise UnsafeInput("fragments are not allowed in git urls")
-    if host in _BAD_HOSTS or host.endswith(_BAD_SUFFIXES):
-        raise UnsafeInput("host is not allowed")
-    if allowed_hosts and host not in allowed_hosts:
-        raise UnsafeInput("host is not on the allowlist")
+    if parts.fragment or parts.query:
+        raise UnsafeInput("query strings and fragments are not allowed in git urls")
     try:  # literal IP (including odd forms normalised by ipaddress)
         lit = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         lit = None
+        # Only plain ASCII LDH names (punycode for IDNs): no unicode look-alikes, no percent-escapes, no odd
+        # separators that different parsers (urlsplit, curl, the resolver) could read differently.
+        if not _HOST_CHARS.fullmatch(host) or len(host) > 253:
+            raise UnsafeInput("host is not allowed")
+        if host in _BAD_HOSTS or host.endswith(_BAD_SUFFIXES):
+            raise UnsafeInput("host is not allowed")
         # inet_aton-style spellings (127.1, 2130706433, 0x7f.0.0.1, 0177.0.0.1) are never real hostnames: a TLD is
         # not numeric. Reject before DNS so no resolver quirk can turn them into 127.0.0.1.
         if _NUMERIC_TLD.fullmatch(host.rsplit(".", 1)[-1]):
             raise UnsafeInput("numeric host names are not allowed") from None
+    if allowed_hosts and host not in allowed_hosts:
+        raise UnsafeInput("host is not on the allowlist")
+    # Unresolvable and non-public hosts produce the SAME error, so the endpoint cannot be used to map internal DNS.
+    denied = UnsafeInput("host is not reachable or not allowed")
     if lit is not None:
         if not ip_is_public(lit):
-            raise UnsafeInput("address is not public")
+            raise denied
         addrs = [str(lit)]
     else:
-        addrs = resolver(host, 443)
+        try:
+            addrs = resolver(host, 443)
+        except UnsafeInput:
+            raise denied from None
     if not addrs:
-        raise UnsafeInput("host could not be resolved")
+        raise denied
     for a in addrs:
         try:
             ip = ipaddress.ip_address(a.split("%")[0])
         except ValueError:
-            raise UnsafeInput("host resolved to an invalid address") from None
+            raise denied from None
         if not ip_is_public(ip):
-            raise UnsafeInput("host resolves to a non-public address")
-    return SafeGitUrl(url=url, host=host, port=443, addresses=tuple(addrs))
+            raise denied
+    # Rebuild the URL from the validated components: the host git connects to is byte-for-byte the host that was
+    # resolved and pinned (SafeGitUrl.host), whatever quirks the original string had.
+    netloc = f"[{host.strip('[]')}]" if lit is not None and lit.version == 6 else host
+    path = parts.path or "/"
+    return SafeGitUrl(url=f"https://{netloc}{path}", host=host.strip("[]"), port=443, addresses=tuple(addrs))
 
 
 # ----------------------------------------------------------------------------------------------- archives
@@ -123,6 +138,8 @@ class ArchiveLimits:
     max_ratio: int = 200                     # uncompressed / compressed for the whole archive
     max_depth: int = 64
     max_name_len: int = 1024
+    max_entries: int = 100_000               # every member: files AND directories (a tar of empty dirs is a bomb too)
+    max_seconds: float = 120.0               # wall-clock budget for validating / extracting one archive
 
 
 @dataclass
@@ -184,6 +201,22 @@ def extract_archive(archive: Path, dest: Path | None, limits: ArchiveLimits) -> 
     if dest is not None:
         dest.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
+    deadline = time.monotonic() + limits.max_seconds
+    entries = [0]
+
+    def tick() -> None:
+        """Called for EVERY member (directories included) before anything is created for it."""
+        entries[0] += 1
+        if entries[0] > limits.max_entries:
+            raise UnsafeInput("archive contains too many entries")
+        if time.monotonic() > deadline:
+            raise UnsafeInput("archive processing exceeded the time limit")
+
+    def unique(name: str) -> None:
+        key = name.rstrip("/").lower()
+        if key in seen:
+            raise UnsafeInput("archive contains duplicate entries")
+        seen.add(key)
 
     def target_for(name: str) -> Path | None:
         rel = safe_member_path(name, limits)
@@ -195,15 +228,14 @@ def extract_archive(archive: Path, dest: Path | None, limits: ArchiveLimits) -> 
         return t
 
     def account(name: str) -> None:
-        key = name.lower()
-        if key in seen:
-            raise UnsafeInput("archive contains duplicate entries")
-        seen.add(key)
+        unique(name)
         stats.files += 1
         if stats.files > limits.max_files:
             raise UnsafeInput("archive contains too many files")
 
     def write(opener: Callable[[], BinaryIO], target: Path | None) -> None:
+        if time.monotonic() > deadline:
+            raise UnsafeInput("archive processing exceeded the time limit")
         with opener() as src:
             if target is None:
                 n = _copy_capped(src, None, budget, limits.max_file_bytes)
@@ -222,10 +254,14 @@ def extract_archive(archive: Path, dest: Path | None, limits: ArchiveLimits) -> 
                 infos = zf.infolist()
                 if len(infos) > limits.max_files:
                     raise UnsafeInput("archive contains too many files")
+                if len(infos) > limits.max_entries:
+                    raise UnsafeInput("archive contains too many entries")
                 for zi in infos:
+                    tick()
                     mode = (zi.external_attr >> 16) & 0xFFFF
                     if zi.is_dir():
                         t = target_for(zi.filename.rstrip("/") or zi.filename)
+                        unique(zi.filename)
                         if t is not None:
                             t.mkdir(parents=True, exist_ok=True)
                         continue
@@ -239,8 +275,10 @@ def extract_archive(archive: Path, dest: Path | None, limits: ArchiveLimits) -> 
         else:
             with tarfile.open(archive, mode="r:gz") as tf:
                 for ti in tf:
+                    tick()  # before the directory branch: directory entries used to bypass every limit
                     if ti.isdir():
                         t = target_for(ti.name.rstrip("/") or ti.name)
+                        unique(ti.name)
                         if t is not None:
                             t.mkdir(parents=True, exist_ok=True)
                         continue
@@ -276,6 +314,23 @@ def strip_unsafe_tree(root: Path) -> int:
                 p.unlink(missing_ok=True)
                 removed += 1
     return removed
+
+
+def check_tree(root: Path, max_entries: int, max_depth: int, max_seconds: float = 60.0) -> int:
+    """Bound a directory tree produced by an untrusted process (git clone): entries (files + dirs) and depth.
+    Stops walking as soon as a bound is crossed. Returns the entry count."""
+    base_depth = len(root.parts)
+    n = 0
+    deadline = time.monotonic() + max_seconds
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        n += len(dirnames) + len(filenames)
+        if n > max_entries:
+            raise UnsafeInput("repository contains too many files")
+        if len(Path(dirpath).parts) - base_depth > max_depth:
+            raise UnsafeInput("repository paths are nested too deeply")
+        if time.monotonic() > deadline:
+            raise UnsafeInput("repository scan exceeded the time limit")
+    return n
 
 
 def dir_size(root: Path) -> tuple[int, int]:

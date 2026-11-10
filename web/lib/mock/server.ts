@@ -43,6 +43,7 @@ interface State {
   comments: Record<string, Comment[]>;
   findings: Record<string, Finding[]>;
   audit: AuditEntry[];
+  invites: Array<{ token: string; wid: string; email: string; role: Role }>;
 }
 
 let state: State | null = null;
@@ -121,6 +122,7 @@ function init(): State {
       { id: uuid("a2"), actor: "maya@acme.test", action: "member.add", target: "ines@acme.test", at: iso(now - 9 * DAY) },
       { id: uuid("a3"), actor: "dev@acme.test", action: "run.start", target: "spring-petclinic", at: iso(now - 1 * DAY) },
     ],
+    invites: [],
   };
 }
 
@@ -337,21 +339,29 @@ route("GET", "/v1/workspaces/{wid}/members", (r) => {
   const items = S().members[wid] ?? [];
   return ok({ items, total: items.length });
 });
-route("POST", "/v1/workspaces/{wid}/members", (r) => {
+route("POST", "/v1/workspaces/{wid}/invitations", (r) => {
   const wid = r.m[1]!;
   const role = roleOf(wid, r.u);
   if (!role) return err(404, "not_found", "Workspace not found.");
-  if (role !== "owner" && role !== "admin") return err(403, "forbidden", "Only owners and admins can add members.");
+  if (role !== "owner" && role !== "admin") return err(403, "forbidden", "Only owners and admins can invite members.");
   const { email, role: newRole } = body<{ email?: string; role?: Role }>(r);
   if (!/^\S+@\S+\.\S+$/.test(text(email))) return err(422, "validation_error", "Enter a valid email address.");
   if (!newRole || !["owner", "admin", "member", "viewer"].includes(newRole)) return err(422, "validation_error", "Choose a role.");
-  const list = (S().members[wid] ??= []);
-  if (list.some((m) => m.email.toLowerCase() === text(email).toLowerCase())) return err(409, "already_member", "That person is already a member.");
-  let u = S().users.find((x) => x.email.toLowerCase() === text(email).toLowerCase());
-  if (!u) { u = { id: crypto.randomUUID(), email: text(email), name: null, password: "" }; S().users.push(u); }
-  const m: Member = { user_id: u.id, email: u.email, name: u.name, role: newRole, created_at: iso(Date.now()) };
+  // Uniform answer: identical for registered, unregistered and already-member addresses.
+  const token = `mock-${crypto.randomUUID()}-${crypto.randomUUID()}`;
+  (S().invites ??= []).push({ token, wid, email: text(email).toLowerCase(), role: newRole });
+  return ok({ status: "invited", token, invitation: { id: crypto.randomUUID(), email: text(email), role: newRole } }, 202);
+});
+route("POST", "/v1/invitations/accept", (r) => {
+  const { token } = body<{ token?: string }>(r);
+  const inv = (S().invites ??= []).find((i) => i.token === text(token) && i.email === r.u.email.toLowerCase());
+  if (!inv) return err(404, "not_found", "invitation not found");
+  const list = (S().members[inv.wid] ??= []);
+  if (list.some((m) => m.user_id === r.u.id)) return err(409, "conflict", "already a member of this workspace");
+  S().invites = S().invites.filter((i) => i !== inv);
+  const m: Member = { user_id: r.u.id, email: r.u.email, name: r.u.name, role: inv.role, created_at: iso(Date.now()) };
   list.push(m);
-  return ok(m, 201);
+  return ok(m, 200);
 });
 route("DELETE", "/v1/workspaces/{wid}/members/{uid}", (r) => {
   const wid = r.m[1]!;

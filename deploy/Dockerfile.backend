@@ -22,7 +22,10 @@ ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="migration-agent-backend" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.base.name="${PYTHON_IMAGE}"
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp \
+# ENVIRONMENT defaults to production inside the image; MA_IN_CONTAINER makes the app refuse to start if ENVIRONMENT
+# is ever removed (fail closed). Production enforces strong JWT secrets and closed signup by default.
+ENV ENVIRONMENT=production MA_IN_CONTAINER=1 \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp \
     TIKTOKEN_CACHE_DIR=/tmp/tiktoken LITELLM_LOCAL_MODEL_COST_MAP=True
 RUN groupadd --gid 10001 app \
  && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin app \
@@ -36,5 +39,5 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/migrations ./migrations
 USER 10001:10001
 EXPOSE 8000
-# Default command is the API (app factory; migrations are run by the compose command via alembic.ini/migrations in /app); the worker overrides it (python -m app.worker). Health is probed by compose.
-CMD ["uvicorn", "app.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# Default command is the API (app factory; migrations run in the compose `migrate` one-shot service via alembic.ini/migrations in /app); the worker overrides it (python -m app.worker). Health is probed by compose.
+CMD ["uvicorn", "app.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

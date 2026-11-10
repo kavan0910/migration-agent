@@ -46,7 +46,7 @@ Repo map:
 Run the stack (requires Docker and the backend and web directories):
 
 ```bash
-cp deploy/.env.example deploy/.env      # set POSTGRES_PASSWORD, JWT_SECRET and a model key
+cp deploy/.env.example deploy/.env      # set POSTGRES_PASSWORD, MA_OWNER_PASSWORD, MA_APP_PASSWORD, JWT_SECRET and a model key
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 deploy/smoke.sh                         # health, signup, sample project, key endpoints
 ```

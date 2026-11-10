@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -43,6 +44,11 @@ def install_handlers(app: FastAPI) -> None:
     async def _val(_: Request, e: RequestValidationError):
         parts = [f"{'.'.join(str(x) for x in err['loc'] if x != 'body')}: {err['msg']}" for err in e.errors()[:5]]
         return JSONResponse(_body("invalid_request", "; ".join(parts)), status_code=422)
+
+    @app.exception_handler(IntegrityError)
+    async def _integrity(_: Request, e: IntegrityError):
+        # Safety net: a lost race on a unique constraint is a conflict the client can retry, never a 500.
+        return JSONResponse(_body("conflict", "the request conflicts with the current state, retry"), status_code=409)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, e: Exception):

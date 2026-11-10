@@ -138,3 +138,43 @@ def test_clone_failure_timeout_and_size(tmp_path):
     with pytest.raises(UnsafeInput):
         clone_public_repo("https://github.com/a/b", big, Settings(git_max_mb=1), runner=lambda *a, **k: _Proc(0, mk), resolver=res)
     assert not big.exists()
+
+
+# ---- F12 (pentest 2026-11-09)
+@pytest.mark.parametrize("ip", ["::7f00:1", "::a00:1", "::ffff:8.8.8.8", "::ffff:0:8.8.8.8", "64:ff9b::7f00:1",
+                                "64:ff9b::808:808", "2002:7f00:1::1"])
+def test_ipv6_embedded_ipv4_forms_are_blocked(ip):
+    with pytest.raises(UnsafeInput):
+        validate_git_url(f"https://[{ip}]/a")
+    with pytest.raises(UnsafeInput):
+        validate_git_url("https://innocent.example.com/a", resolver=lambda h, p: [ip])
+
+
+@pytest.mark.parametrize("host", ["gïthub.com", "git%68ub.com", "github.com%2e.evil", "a_b.example.com", "ex ample.com",
+                                  "github。com", "github.com​", "github.com.evil.com\\x", "-x.com"])
+def test_hostname_charset_is_ldh_only(host):
+    with pytest.raises(UnsafeInput):
+        validate_git_url(f"https://{host}/a/b", resolver=PUB)
+
+
+def test_trailing_dot_stripped_and_url_rebuilt_from_validated_components():
+    s = validate_git_url("https://GitHub.COM./org/repo.git", resolver=PUB)
+    assert s.host == "github.com" and s.url == "https://github.com/org/repo.git"
+    # the host in the URL handed to git is exactly the host the DNS pin is keyed on
+    from app.gitfetch import build_clone_args
+    args = build_clone_args(Settings(environment="test"), s.url, __import__("pathlib").Path("/x"), s.host, s.addresses)
+    assert f"http.curloptResolve={s.host}:443:" in " ".join(args) and s.url in args
+
+
+def test_unresolved_and_non_public_hosts_give_the_same_error():
+    def boom(h, p):
+        raise UnsafeInput("host could not be resolved")
+    errs = set()
+    for res in (boom, lambda h, p: [], lambda h, p: ["10.0.0.1"], lambda h, p: ["::ffff:10.0.0.1"]):
+        with pytest.raises(UnsafeInput) as e:
+            validate_git_url("https://x.example.com/a", resolver=res)
+        errs.add(str(e.value))
+    with pytest.raises(UnsafeInput) as e:
+        validate_git_url("https://10.0.0.1/a")
+    errs.add(str(e.value))
+    assert len(errs) == 1, errs

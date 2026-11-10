@@ -6,7 +6,7 @@ import { SseParser } from "./sse";
 import { tokenStore } from "./token";
 import type {
   ApiErrorBody, AuditEntry, Comment, DocumentResponse, Entitlements, Estimate, EstimateRequest, Finding,
-  GraphDiff, GraphEdge, GraphNode, GraphPage, GraphQuery, GraphVersion, ListResponse, Member, NodeDetail,
+  GraphDiff, GraphEdge, GraphNode, GraphPage, GraphQuery, GraphVersion, InviteResult, ListResponse, Member, NodeDetail,
   Project, ResolutionStatus, ResolveResult, Role, Run, RunEvent, RunRequest, TokenResponse, Usage, User, Workspace,
 } from "./types";
 
@@ -139,8 +139,10 @@ export const api = {
     create: (name: string) => post<Workspace>("/v1/workspaces", { name }),
     members: (wid: string) =>
       get<ListResponse<Member>>(`/v1/workspaces/${enc(wid)}/members`).then((r) => ({ ...r, items: r.items.map(normUser) })),
-    addMember: (wid: string, email: string, role: Role) =>
-      post<Member>(`/v1/workspaces/${enc(wid)}/members`, { email, role }).then(normUser),
+    // Members join by invitation: the server answers identically whether or not the e-mail is registered.
+    invite: (wid: string, email: string, role: Role) =>
+      post<InviteResult>(`/v1/workspaces/${enc(wid)}/invitations`, { email, role }),
+    acceptInvite: (token: string) => post<Member>("/v1/invitations/accept", { token }).then(normUser),
     removeMember: (wid: string, uid: string) =>
       request<void>("DELETE", `/v1/workspaces/${enc(wid)}/members/${enc(uid)}`),
     usage: (wid: string, range?: { from?: string; to?: string }) =>

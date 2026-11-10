@@ -33,6 +33,17 @@ describe("mock API follows the section 3 contract", () => {
     const q = (await call("GET", `/v1/projects/${PID}/graph`, undefined, { q: "telephone" })).body as { nodes: Array<{ name: string }> };
     expect(q.nodes.length).toBeGreaterThan(0);
   });
+  it("adds members only through an invitation the invitee accepts, with a uniform invite answer", async () => {
+    const known = await call("POST", `/v1/workspaces/${WID}/invitations`, { email: "maya@acme.test", role: "viewer" });
+    const unknown = await call("POST", `/v1/workspaces/${WID}/invitations`, { email: "ghost@acme.test", role: "viewer" });
+    expect(known.status).toBe(202);
+    expect(Object.keys(known.body as object).sort()).toEqual(Object.keys(unknown.body as object).sort());
+    const before = ((await call("GET", `/v1/workspaces/${WID}/members`)).body as { total: number }).total;
+    expect(before).toBe(4); // nothing was added yet
+    const mayaTok = ((await call("POST", "/v1/auth/login", { email: "maya@acme.test", password: "x" }, {}, null)).body as { access_token: string }).access_token;
+    expect((await call("POST", "/v1/invitations/accept", { token: (known.body as { token: string }).token }, {}, TOKEN)).status).toBe(404); // wrong account
+    expect((await call("POST", "/v1/invitations/accept", { token: (known.body as { token: string }).token }, {}, mayaTok)).status).toBe(409); // already a member
+  });
   it("answers another workspace's or unknown project with 404, never 403", async () => {
     expect((await call("GET", "/v1/projects/00000000-0000-4000-a000-000000000000")).status).toBe(404);
   });

@@ -7,6 +7,8 @@
 # Requires: docker compose, curl, python3, tar. Uses AUTH_MODE=dev. Never prints tokens.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Self-serve signup is CLOSED by default in the stack; the smoke test needs it, so open it for this run only.
+export SIGNUP_ENABLED="${SMOKE_SIGNUP_ENABLED:-true}"
 COMPOSE=(docker compose -f deploy/docker-compose.yml --env-file "${SMOKE_ENV_FILE:-deploy/.env}")
 API="${SMOKE_API_URL:-http://127.0.0.1:${API_PORT:-8000}}"
 WEB="${SMOKE_WEB_URL:-http://127.0.0.1:${WEB_PORT:-3000}}"

@@ -23,6 +23,7 @@ class ObjectStore(Protocol):
     def delete(self, key: str) -> None: ...
     def delete_prefix(self, prefix: str) -> int: ...
     def list(self, prefix: str) -> list[str]: ...
+    def list_project_prefixes(self) -> list[str]: ...  # every "{workspace}/{project}/" that holds objects
 
 
 def project_prefix(workspace_id: str, project_id: str) -> str:
@@ -103,6 +104,13 @@ class LocalStore:
             shutil.rmtree(d, ignore_errors=False)
         return n
 
+    def list_project_prefixes(self) -> list[str]:
+        out = []
+        for w in sorted(p for p in self.root.iterdir() if p.is_dir()):
+            for pr in sorted(p for p in w.iterdir() if p.is_dir()):
+                out.append(f"{w.name}/{pr.name}/")
+        return out
+
     def list(self, prefix: str) -> list[str]:
         base = self.root
         out = []
@@ -173,13 +181,59 @@ class S3Store:
                 return keys
             token = r["NextContinuationToken"]
 
+    def list_project_prefixes(self) -> list[str]:
+        out: list[str] = []
+        for wp in self._common_prefixes(""):
+            out += self._common_prefixes(wp)
+        return out
+
+    def _common_prefixes(self, prefix: str) -> list[str]:
+        res: list[str] = []
+        token = None
+        while True:
+            kw = {"Bucket": self.bucket, "Prefix": prefix, "Delimiter": "/"}
+            if token:
+                kw["ContinuationToken"] = token
+            r = self.c.list_objects_v2(**kw)
+            res += [p["Prefix"] for p in r.get("CommonPrefixes", [])]
+            if not r.get("IsTruncated"):
+                return res
+            token = r["NextContinuationToken"]
+
+    def _versions(self, prefix: str) -> list[dict]:
+        """Every object version and delete marker under prefix (a versioned bucket keeps data after a plain delete)."""
+        out: list[dict] = []
+        kw: dict = {"Bucket": self.bucket, "Prefix": prefix}
+        while True:
+            r = self.c.list_object_versions(**kw)
+            for v in list(r.get("Versions", [])) + list(r.get("DeleteMarkers", [])):
+                o = {"Key": v["Key"]}
+                if v.get("VersionId"):
+                    o["VersionId"] = v["VersionId"]
+                out.append(o)
+            if not r.get("IsTruncated"):
+                return out
+            kw["KeyMarker"] = r.get("NextKeyMarker")
+            if r.get("NextVersionIdMarker"):
+                kw["VersionIdMarker"] = r["NextVersionIdMarker"]
+
     def delete_prefix(self, prefix: str) -> int:
+        """Delete every object AND every version / delete marker. Raises StoreError unless the store confirmed every
+        deletion (``delete_objects`` reports per-key failures in ``Errors`` instead of raising)."""
         if not prefix.endswith("/"):
             raise StoreError("prefix must end with '/'")
-        keys = self.list(prefix)
-        for i in range(0, len(keys), 1000):
-            self.c.delete_objects(Bucket=self.bucket, Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]]})
-        return len(keys)
+        objs = self._versions(prefix)
+        known = {o["Key"] for o in objs}
+        objs += [{"Key": k} for k in self.list(prefix) if k not in known]
+        failed: list[str] = []
+        for i in range(0, len(objs), 1000):
+            r = self.c.delete_objects(Bucket=self.bucket, Delete={"Objects": objs[i:i + 1000], "Quiet": True})
+            failed += [f"{e.get('Key')}:{e.get('Code')}" for e in (r or {}).get("Errors", [])]
+        if failed:
+            raise StoreError(f"{len(failed)} object(s) could not be deleted (first: {failed[0]})")
+        if self.list(prefix) or self._versions(prefix):  # verify, do not assume
+            raise StoreError("objects still present after delete")
+        return len({o["Key"] for o in objs})
 
 
 def make_store(s: Settings) -> ObjectStore:

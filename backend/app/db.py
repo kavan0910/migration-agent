@@ -85,3 +85,15 @@ def set_rls_context(session: Session, workspace_ids: list[str] | None, bypass: b
     session.info["rls_ids"], session.info["bypass"] = list(workspace_ids or []), bypass
     session.execute(text("SELECT set_config('app.workspace_ids', :v, true), set_config('app.bypass', :b, true)"),
                     {"v": ",".join(workspace_ids or []), "b": "on" if bypass else "off"})
+
+
+def lock_row(session: Session, model, pk_value: str, pk_name: str = "id") -> None:
+    """Serialise concurrent transactions on one row until commit/rollback.
+
+    Issues a no-op UPDATE: Postgres takes a row lock (later readers under READ COMMITTED see the winner's commit),
+    SQLite takes the database write lock (busy_timeout makes the others wait). Used for check-then-insert sections
+    (run admission, workspace caps, last-owner checks) so they cannot race.
+    """
+    from sqlalchemy import update
+    col = model.__table__.c[pk_name]
+    session.execute(update(model.__table__).where(col == pk_value).values({col: col}))

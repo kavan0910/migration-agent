@@ -23,6 +23,12 @@ class Identity:
     email: str | None = None
     name: str | None = None
     email_verified: bool = False
+    issuer: str | None = None
+
+    def external_id(self) -> str:
+        """Stable local key for an externally issued identity: scoped by issuer, so the same ``sub`` from a different
+        issuer (or after an issuer change) can never resolve to an existing account."""
+        return f"{self.issuer}|{self.subject}" if self.issuer else self.subject
 
 
 _ph = PasswordHasher()
@@ -94,7 +100,7 @@ class OidcTokens:
         except (jwt.PyJWTError, jwt.PyJWKClientError):
             raise AuthError("invalid token") from None
         return Identity(subject=str(c["sub"]), email=c.get("email"), name=c.get("name"),
-                        email_verified=bool(c.get("email_verified")))
+                        email_verified=bool(c.get("email_verified")), issuer=self.issuer)
 
 
 def make_verifier(settings: Settings) -> TokenVerifier:

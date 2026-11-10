@@ -14,9 +14,13 @@ from sqlalchemy.orm import Session
 
 from .models import Entitlement, Membership, Plan, Project, Run, UsageEvent
 
-DEFAULT_PLAN = "internal"
-# Generous limits for the internal plan (resource ceilings, not prices). null/absent = unlimited.
+DEFAULT_PLAN = "free"   # what self-serve workspaces get (Settings.default_plan can override)
+# Resource ceilings as plain data (not prices; no payment code). null/absent = unlimited.
+# "free" is the restrictive self-serve default. "internal" is for explicitly assigned / admin / dev use only and is
+# never granted automatically by signup or workspace creation.
 DEFAULT_PLANS: dict[str, dict] = {
+    "free": {"max_projects": 5, "max_members": 5, "max_runs_per_month": 20, "max_concurrent_runs": 2,
+             "max_usd_per_run": 5.0, "monthly_usd_budget": 20.0, "max_source_mb": 100},
     "internal": {"max_projects": 1000, "max_members": 1000, "max_runs_per_month": 100000,
                  "max_concurrent_runs": 20, "max_usd_per_run": 1000.0, "monthly_usd_budget": 100000.0,
                  "max_source_mb": 500},
@@ -61,11 +65,16 @@ def ensure_default_plans(db: Session) -> None:
     db.flush()
 
 
-def ensure_entitlement(db: Session, workspace_id: str) -> Entitlement:
+def default_plan_name() -> str:
+    from .config import get_settings
+    return get_settings().default_plan or DEFAULT_PLAN
+
+
+def ensure_entitlement(db: Session, workspace_id: str, plan: str | None = None) -> Entitlement:
     ent = db.get(Entitlement, workspace_id)
     if ent is None:
         ensure_default_plans(db)
-        ent = Entitlement(workspace_id=workspace_id, plan=DEFAULT_PLAN, overrides={})
+        ent = Entitlement(workspace_id=workspace_id, plan=plan or default_plan_name(), overrides={})
         db.add(ent)
         db.flush()
     return ent
@@ -84,6 +93,15 @@ def month_start(at: datetime | None = None) -> datetime:
     return at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
+def reserved_usd(db: Session, workspace_id: str, exclude_run_id: str | None = None) -> float:
+    """Budget still held by queued/running runs: max_usd minus what they already spent (spent is in usage_events)."""
+    conds = [Run.workspace_id == workspace_id, Run.status.in_(("queued", "running"))]
+    if exclude_run_id:
+        conds.append(Run.id != exclude_run_id)
+    v = db.scalar(select(func.coalesce(func.sum(Run.max_usd - func.coalesce(Run.cost_usd, 0.0)), 0.0)).where(*conds))
+    return max(0.0, float(v or 0.0))
+
+
 def consumption(db: Session, workspace_id: str) -> dict:
     ms = month_start()
     usd = db.scalar(select(func.coalesce(func.sum(UsageEvent.usd), 0.0))
@@ -91,9 +109,10 @@ def consumption(db: Session, workspace_id: str) -> dict:
     runs = db.scalar(select(func.count()).select_from(Run).where(Run.workspace_id == workspace_id, Run.created_at >= ms)) or 0
     active = db.scalar(select(func.count()).select_from(Run)
                        .where(Run.workspace_id == workspace_id, Run.status.in_(("queued", "running")))) or 0
+    reserved = reserved_usd(db, workspace_id)
     projects = db.scalar(select(func.count()).select_from(Project).where(Project.workspace_id == workspace_id)) or 0
     members = db.scalar(select(func.count()).select_from(Membership).where(Membership.workspace_id == workspace_id)) or 0
-    return {"usd_this_month": round(float(usd), 6), "runs_this_month": runs, "active_runs": active,
+    return {"usd_this_month": round(float(usd), 6), "reserved_usd": round(reserved, 6), "runs_this_month": runs, "active_runs": active,
             "projects": projects, "members": members}
 
 
@@ -110,7 +129,7 @@ def can_start_run(db: Session, workspace_id: str, estimate: dict, max_usd: float
     c = consumption(db, workspace_id)
     est = float((estimate or {}).get("usd") or 0.0)
     budget = max_usd if max_usd is not None else est
-    exposure = max(0.0, min(est, budget)) if max_usd is not None else est
+    exposure = budget  # the full requested budget is reserved, not just the estimate
 
     def lt(key: str, val: float, msg: str) -> Decision | None:
         cap = lim.get(key)
@@ -120,19 +139,42 @@ def can_start_run(db: Session, workspace_id: str, estimate: dict, max_usd: float
         lt("max_usd_per_run", budget, "requested budget exceeds the per-run limit of the plan"),
         lt("max_concurrent_runs", c["active_runs"] + 1, "too many runs in progress for this workspace"),
         lt("max_runs_per_month", c["runs_this_month"] + 1, "monthly run limit reached"),
-        lt("monthly_usd_budget", c["usd_this_month"] + exposure, "monthly spend limit would be exceeded"),
+        lt("monthly_usd_budget", c["usd_this_month"] + c["reserved_usd"] + exposure,
+           "monthly spend limit would be exceeded (spent plus budget reserved by runs in progress)"),
     ):
         if d:
             return d
     return Decision(True, "", {"plan": plan})
 
 
-def remaining_monthly_usd(db: Session, workspace_id: str) -> float | None:
+def remaining_monthly_usd(db: Session, workspace_id: str, exclude_run_id: str | None = None) -> float | None:
+    """Monthly budget a run may still spend: cap minus spend minus what OTHER active runs have reserved."""
     _, lim = effective_limits(db, workspace_id)
     cap = lim.get("monthly_usd_budget")
     if cap is None:
         return None
-    return max(0.0, float(cap) - consumption(db, workspace_id)["usd_this_month"])
+    spent = consumption(db, workspace_id)["usd_this_month"]
+    return max(0.0, float(cap) - spent - reserved_usd(db, workspace_id, exclude_run_id))
+
+
+def can_user_start_run(db: Session, user_id: str | None, budget: float, *, max_active: int, max_monthly_usd: float,
+                       max_monthly_runs: int) -> Decision:
+    """Global per-user ceiling across every workspace the user creates runs in."""
+    if not user_id:
+        return Decision(True)
+    ms = month_start()
+    active, reserved = db.execute(select(func.count(), func.coalesce(func.sum(Run.max_usd - func.coalesce(Run.cost_usd, 0.0)), 0.0))
+                                  .where(Run.created_by == user_id, Run.status.in_(("queued", "running")))).one()
+    spent = db.scalar(select(func.coalesce(func.sum(Run.cost_usd), 0.0)).where(Run.created_by == user_id, Run.created_at >= ms)) or 0.0
+    runs = db.scalar(select(func.count()).select_from(Run).where(Run.created_by == user_id, Run.created_at >= ms)) or 0
+    if active + 1 > max_active:
+        return Decision(False, "too many runs in progress for this account", {"limit": "user_active_runs", "cap": max_active})
+    if runs + 1 > max_monthly_runs:
+        return Decision(False, "monthly run limit for this account reached", {"limit": "user_monthly_runs", "cap": max_monthly_runs})
+    if float(spent) + max(0.0, float(reserved)) + budget > max_monthly_usd:
+        return Decision(False, "monthly spend limit for this account would be exceeded",
+                        {"limit": "user_monthly_usd", "cap": max_monthly_usd})
+    return Decision(True)
 
 
 def check_count_limit(db: Session, workspace_id: str, key: str, current: int) -> Decision:

@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 
 from .. import audit
 from ..errors import ApiError
-from ..models import Job, Run, RunEvent
+from ..db import set_rls_context
+from ..deps import _bearer, current_user
+from ..models import Job, Membership, Run, RunEvent, User
+from ..security import AuthError
 from ..serializers import Page, run_out
 from ..services import runs as run_service
 from ..tenancy import ProjectCtx, RunCtx, project_ctx, run_ctx
@@ -77,40 +83,94 @@ def cancel_run(ctx: RunCtx = Depends(run_ctx)):
     return run_out(run)
 
 
+def _authorize_stream(request: Request, rid: str) -> tuple[str, str, str]:
+    """Authenticate + authorise in a short-lived session (closed before streaming starts, so an open stream never pins
+    a pooled database connection). Returns (user_id, workspace_id, bearer token)."""
+    s = request.app.state.db.sessionmaker()
+    try:
+        user = current_user(request, s)
+        ctx = run_ctx(rid, user, s)
+        return user.id, ctx.run.workspace_id, _bearer(request)
+    finally:
+        s.rollback()
+        s.close()
+
+
+def _stream_allowed(dbh, verifier, user_id: str, wid: str, token: str) -> bool:
+    """Re-validated every ``sse_recheck_s``: token still valid/unexpired, account active, still a member."""
+    try:
+        verifier.verify(token)
+    except AuthError:
+        return False
+    with dbh.session() as s:
+        active = s.scalar(select(User.is_active).where(User.id == user_id))
+        member = s.scalar(select(Membership.id).where(Membership.workspace_id == wid, Membership.user_id == user_id))
+        return bool(active) and member is not None
+
+
+def _fetch_events(dbh, rid: str, wid: str, seq: int):
+    with dbh.session() as s:
+        set_rls_context(s, [wid])
+        rows = s.scalars(select(RunEvent).where(RunEvent.run_id == rid, RunEvent.workspace_id == wid,
+                                                RunEvent.seq > seq).order_by(RunEvent.seq).limit(200)).all()
+        status = s.scalar(select(Run.status).where(Run.id == rid))
+        return [(e.seq, e.type, e.payload) for e in rows], status
+
+
 @router.get("/v1/runs/{rid}/events")
-def run_events(request: Request, ctx: RunCtx = Depends(run_ctx), after: int | None = Query(None, ge=0),
-               last_event_id: str | None = Header(default=None)):
+async def run_events(rid: str, request: Request, after: int | None = Query(None, ge=0),
+                     last_event_id: str | None = Header(default=None)):
     """Server-Sent Events. Replays stored events after ``after`` / ``Last-Event-ID`` then follows live until the run
-    reaches a terminal state, then emits ``event: end``."""
+    reaches a terminal state, then emits ``event: end``.
+
+    Asynchronous on purpose: a stream waits with ``asyncio.sleep`` and touches the database only through short
+    threadpool calls, so thousands of idle streams cannot starve the API of worker threads. Bounded by per-user and
+    per-run stream caps (429), a maximum lifetime (the client reconnects with Last-Event-ID) and a periodic
+    re-check of membership and token expiry (a removed viewer or an expired token is cut off with ``event: end``)."""
     st = request.app.state.settings
-    dbh = request.app.state.db
-    rid, wid = ctx.run.id, ctx.run.workspace_id
+    dbh, verifier, reg = request.app.state.db, request.app.state.verifier, request.app.state.sse
+    user_id, wid, token = await run_in_threadpool(_authorize_stream, request, rid)
+    lease = reg.acquire(user_id, rid, st.sse_max_per_user, st.sse_max_per_run, st.sse_max_lifetime_s + 30)
+    if lease is None:
+        raise ApiError(429, "rate_limited", "too many open event streams", {"Retry-After": "5"})
     start = after
     if start is None and last_event_id and last_event_id.isdigit():
         start = int(last_event_id)
     start = start or 0
 
-    def gen():
-        seq, beat, t0 = start, time.monotonic(), time.monotonic()
-        while time.monotonic() - t0 < 3600:
-            with dbh.session() as s:
-                rows = s.scalars(select(RunEvent).where(RunEvent.run_id == rid, RunEvent.workspace_id == wid,
-                                                        RunEvent.seq > seq).order_by(RunEvent.seq).limit(200)).all()
-                status = s.scalar(select(Run.status).where(Run.id == rid))
-                data = [(e.seq, e.type, e.payload) for e in rows]
-            for sq, typ, payload in data:
-                seq = sq
-                yield f"id: {sq}\nevent: {typ}\ndata: {json.dumps(payload)}\n\n"
-                beat = time.monotonic()
-            if data:
-                continue
-            if status is None or status in run_service.TERMINAL:
-                yield f"event: end\ndata: {json.dumps({'status': status})}\n\n"
-                return
-            if time.monotonic() - beat > st.sse_heartbeat_s:
-                yield ": ping\n\n"
-                beat = time.monotonic()
-            time.sleep(st.sse_poll_s)
+    def end(status: str | None, reason: str | None = None) -> str:
+        return f"event: end\ndata: {json.dumps({'status': status, **({'reason': reason} if reason else {})})}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
+    async def gen():
+        try:
+            seq = start
+            t0 = beat = last_check = time.monotonic()
+            while True:
+                now = time.monotonic()
+                if now - t0 >= st.sse_max_lifetime_s:
+                    yield end(None, "lifetime")
+                    return
+                if now - last_check >= st.sse_recheck_s:
+                    last_check = now
+                    if not await run_in_threadpool(_stream_allowed, dbh, verifier, user_id, wid, token):
+                        yield end(None, "revoked")
+                        return
+                data, status = await run_in_threadpool(_fetch_events, dbh, rid, wid, seq)
+                for sq, typ, payload in data:
+                    seq = sq
+                    yield f"id: {sq}\nevent: {typ}\ndata: {json.dumps(payload)}\n\n"
+                    beat = time.monotonic()
+                if data:
+                    continue
+                if status is None or status in run_service.TERMINAL:
+                    yield end(status)
+                    return
+                if time.monotonic() - beat > st.sse_heartbeat_s:
+                    yield ": ping\n\n"
+                    beat = time.monotonic()
+                await asyncio.sleep(st.sse_poll_s)
+        finally:
+            reg.release(lease)
+
+    return StreamingResponse(gen(), media_type="text/event-stream", background=BackgroundTask(reg.release, lease),
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

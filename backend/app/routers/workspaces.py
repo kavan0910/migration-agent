@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+import hashlib
+import secrets
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import audit
 from ..billing import check_count_limit, consumption, effective_limits
+from ..db import lock_row
 from ..deps import current_user, get_db
 from ..errors import ApiError, forbidden, not_found
-from ..models import AuditLog, Membership, Project, Run, UsageEvent, User, Workspace
+from ..models import AuditLog, Invitation, Membership, Project, Run, UsageEvent, User, Workspace
 from ..serializers import Page, audit_out, iso, member_out, workspace_out
 from ..services import accounts
 from ..tenancy import RANK, WorkspaceCtx, workspace_ctx
@@ -25,9 +29,13 @@ class WorkspaceIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
-class MemberIn(BaseModel):
+class InviteIn(BaseModel):
     email: EmailStr
     role: Role = "member"
+
+
+class AcceptIn(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
 
 
 @router.get("/v1/workspaces")
@@ -40,8 +48,10 @@ def list_workspaces(page: Page = Depends(), user: User = Depends(current_user), 
 
 
 @router.post("/v1/workspaces", status_code=201)
-def create_workspace(body: WorkspaceIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    ws = accounts.create_workspace(db, body.name, user)
+def create_workspace(body: WorkspaceIn, request: Request, user: User = Depends(current_user),
+                     db: Session = Depends(get_db)):
+    st = request.app.state.settings
+    ws = accounts.create_workspace(db, body.name, user, plan=st.default_plan, max_per_user=st.max_workspaces_per_user)
     db.commit()
     return workspace_out(ws, "owner")
 
@@ -65,27 +75,91 @@ def _can_assign(actor_role: str, role: str) -> bool:
     return actor_role == "owner" or RANK[role] < RANK["admin"]
 
 
-@router.post("/v1/workspaces/{wid}/members", status_code=201)
-def add_member(body: MemberIn, ctx: WorkspaceCtx = Depends(workspace_ctx)):
+def _hash_token(tok: str) -> str:
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+
+def _invite_out(i: Invitation) -> dict:
+    return {"id": i.id, "email": i.email, "role": i.role, "expires_at": iso(i.expires_at), "created_at": iso(i.created_at)}
+
+
+@router.post("/v1/workspaces/{wid}/invitations", status_code=202)
+def invite(body: InviteIn, request: Request, ctx: WorkspaceCtx = Depends(workspace_ctx)):
+    """Create a pending invitation. The response is identical whether or not the e-mail belongs to a registered user
+    or is already a member (no account-existence oracle). The one-time token is returned to the inviting admin to pass
+    to the invitee out of band; only its hash is stored. The invitee must be signed in as that e-mail to accept."""
     ctx.require("admin")
     if not _can_assign(ctx.role, body.role):
         raise forbidden("only an owner can grant admin or owner")
-    db = ctx.db
-    target = db.scalar(select(User).where(User.email == body.email.lower()))
-    if target is None:
-        raise not_found("user")
-    if db.scalar(select(Membership.id).where(Membership.workspace_id == ctx.workspace.id, Membership.user_id == target.id)):
-        raise ApiError(409, "conflict", "user is already a member")
-    n = db.scalar(select(func.count()).select_from(Membership).where(Membership.workspace_id == ctx.workspace.id))
-    d = check_count_limit(db, ctx.workspace.id, "max_members", n)
+    st, db = request.app.state.settings, ctx.db
+    lock_row(db, Workspace, ctx.workspace.id)
+    now = datetime.now(timezone.utc)
+    pending = db.scalar(select(func.count()).select_from(Invitation)
+                        .where(Invitation.workspace_id == ctx.workspace.id, Invitation.accepted_at.is_(None),
+                               Invitation.expires_at > now)) or 0
+    if pending >= st.max_pending_invites:
+        raise ApiError(429, "rate_limited", "too many pending invitations")
+    email = body.email.lower()
+    tok = secrets.token_urlsafe(32)
+    inv = Invitation(workspace_id=ctx.workspace.id, email=email, role=body.role, token_hash=_hash_token(tok),
+                     invited_by=ctx.user.id, expires_at=now + timedelta(hours=st.invite_ttl_hours))
+    db.add(inv)
+    audit.record(db, action="member.invite", workspace_id=ctx.workspace.id, actor=ctx.user.id,
+                 target=hashlib.sha256(email.encode()).hexdigest()[:16], meta={"role": body.role})
+    db.commit()
+    return {"status": "invited", "invitation": _invite_out(inv), "token": tok}
+
+
+@router.get("/v1/workspaces/{wid}/invitations")
+def list_invitations(ctx: WorkspaceCtx = Depends(workspace_ctx)):
+    ctx.require("admin")
+    rows = ctx.db.scalars(select(Invitation).where(Invitation.workspace_id == ctx.workspace.id,
+                                                   Invitation.accepted_at.is_(None),
+                                                   Invitation.expires_at > datetime.now(timezone.utc))
+                          .order_by(Invitation.created_at)).all()
+    return {"items": [_invite_out(i) for i in rows], "total": len(rows)}
+
+
+@router.delete("/v1/workspaces/{wid}/invitations/{iid}", status_code=204)
+def revoke_invitation(iid: str, ctx: WorkspaceCtx = Depends(workspace_ctx)):
+    ctx.require("admin")
+    inv = ctx.db.scalar(select(Invitation).where(Invitation.id == iid, Invitation.workspace_id == ctx.workspace.id))
+    if inv is None:
+        raise not_found("invitation")
+    ctx.db.delete(inv)
+    audit.record(ctx.db, action="member.invite_revoke", workspace_id=ctx.workspace.id, actor=ctx.user.id, target=iid)
+    ctx.db.commit()
+
+
+@router.post("/v1/invitations/accept")
+def accept_invitation(body: AcceptIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Accept as the authenticated invitee. Unknown, expired, used and wrong-account tokens all get the same 404."""
+    inv = db.scalar(select(Invitation).where(Invitation.token_hash == _hash_token(body.token)))
+    now = datetime.now(timezone.utc)
+    if (inv is None or inv.accepted_at is not None or inv.expires_at <= now or inv.email != user.email.lower()):
+        raise not_found("invitation")
+    lock_row(db, Workspace, inv.workspace_id)
+    inv = db.scalar(select(Invitation).where(Invitation.id == inv.id))
+    if inv is None or inv.accepted_at is not None:
+        raise not_found("invitation")
+    if db.scalar(select(Membership.id).where(Membership.workspace_id == inv.workspace_id, Membership.user_id == user.id)):
+        raise ApiError(409, "conflict", "already a member of this workspace")
+    n = db.scalar(select(func.count()).select_from(Membership).where(Membership.workspace_id == inv.workspace_id))
+    d = check_count_limit(db, inv.workspace_id, "max_members", n)
     if not d.allowed:
         raise ApiError(403, "entitlement_denied", d.reason)
-    m = Membership(workspace_id=ctx.workspace.id, user_id=target.id, role=body.role)
+    m = Membership(workspace_id=inv.workspace_id, user_id=user.id, role=inv.role)
+    inv.accepted_at = now
     db.add(m)
-    audit.record(db, action="member.add", workspace_id=ctx.workspace.id, actor=ctx.user.id, target=target.id,
-                 meta={"role": body.role})
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise ApiError(409, "conflict", "already a member of this workspace") from None
+    audit.record(db, action="member.add", workspace_id=inv.workspace_id, actor=user.id, target=user.id,
+                 meta={"role": inv.role, "via": "invitation", "invited_by": inv.invited_by})
     db.commit()
-    return member_out(m, target)
+    return member_out(m, user)
 
 
 @router.delete("/v1/workspaces/{wid}/members/{uid}", status_code=204)
@@ -99,6 +173,7 @@ def remove_member(uid: str, ctx: WorkspaceCtx = Depends(workspace_ctx)):
         if not _can_assign(ctx.role, m.role):
             raise forbidden("only an owner can remove an admin or owner")
     if m.role == "owner":
+        lock_row(db, Workspace, ctx.workspace.id)  # serialise concurrent owner removals / self-leaves
         owners = db.scalar(select(func.count()).select_from(Membership)
                            .where(Membership.workspace_id == ctx.workspace.id, Membership.role == "owner"))
         if owners <= 1:

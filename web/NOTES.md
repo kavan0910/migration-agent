@@ -37,3 +37,11 @@
 - Node counts per type for the filter chips are not available from the contract; chips show no counts.
 - Fonts: Geist (bundled by the `geist` package) and Instrument Serif (`@fontsource`), both self-hosted; no network fetch at build.
 - TypeScript is pinned at 5.9.3 and ESLint at 9.x for compatibility with eslint-config-next 16; newer majors were not tried.
+
+## Invitations (pentest 2026-11-09, F7)
+- The backend no longer force-adds members (`POST /members` is gone). The members page now calls `POST /v1/workspaces/{wid}/invitations`
+  (uniform 202 answer with a one-time code shown to the admin) and the invitee pastes the code under "Join a workspace"
+  (`POST /v1/invitations/accept`) while signed in with the invited e-mail address. Mock mode implements both endpoints.
+- Gaps: no e-mail delivery (the admin passes the code out of band), no pending-invitation list/revoke UI (endpoints exist:
+  `GET/DELETE /v1/workspaces/{wid}/invitations`), no accept-by-link page, and the "Join" form reloads the page instead of
+  refreshing the auth context.

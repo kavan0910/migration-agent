@@ -28,6 +28,12 @@ export interface Member {
   role: Role;
   created_at?: string;
 }
+/** Result of creating an invitation. The token is shown once to the inviting admin; the invitee accepts it. */
+export interface InviteResult {
+  status: string;
+  token: string;
+  invitation: { id: string; email: string; role: Role; expires_at?: string };
+}
 export interface ListResponse<T> {
   items: T[];
   total: number;

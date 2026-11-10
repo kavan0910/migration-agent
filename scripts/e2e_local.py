@@ -255,14 +255,16 @@ def journey(api: str) -> None:
 
     # members
     other = f"mate-{secrets.token_hex(4)}@example.com"
-    Client(api).call("POST", "/v1/auth/signup", {"email": other, "password": pw + "xx"}, expect=201)
-    m = c.call("POST", f"/v1/workspaces/{wid}/members", {"email": other, "role": "member"}, expect=201)[1]
+    mate = Client(api)
+    mate.token = mate.call("POST", "/v1/auth/signup", {"email": other, "password": pw + "xx"}, expect=201)[1]["access_token"]
+    inv = c.call("POST", f"/v1/workspaces/{wid}/invitations", {"email": other, "role": "member"}, expect=202)[1]
+    m = mate.call("POST", "/v1/invitations/accept", {"token": inv["token"]}, expect=200)[1]
     ml = c.call("GET", f"/v1/workspaces/{wid}/members", expect=200)[1]
     assert ml["total"] == 2
     au = c.call("GET", f"/v1/workspaces/{wid}/audit", expect=200)[1]
     assert au["total"] > 0
     c.call("DELETE", f"/v1/workspaces/{wid}/members/{m['user_id']}", expect=204)
-    ok("members add/list/remove, audit log")
+    ok("members invite/accept/list/remove, audit log")
 
     # tenancy: another user cannot see the project
     o = Client(api)

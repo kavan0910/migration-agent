@@ -108,6 +108,13 @@ class User:
     def patch(self, p, **kw): return self.req("PATCH", p, **kw)
     def delete(self, p, **kw): return self.req("DELETE", p, **kw)
 
+    def add_member(self, other: "User", role="member", wid=None) -> None:
+        """Invite ``other`` to this user's workspace and have them accept (the only way to join since F7)."""
+        r = self.post(f"/v1/workspaces/{wid or self.wid}/invitations", json={"email": other.email, "role": role})
+        assert r.status_code == 202, r.text
+        a = other.post("/v1/invitations/accept", json={"token": r.json()["token"]})
+        assert a.status_code == 200, a.text
+
     def project(self, name="proj", with_source=True, wid=None) -> str:
         r = self.post(f"/v1/workspaces/{wid or self.wid}/projects", json={"name": name})
         assert r.status_code == 201, r.text

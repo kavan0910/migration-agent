@@ -13,8 +13,9 @@ from .config import Settings, get_settings
 from .db import Database
 from .deps import throttle
 from .errors import install_handlers
-from .logging_setup import BodyLimitMiddleware, RequestIdMiddleware, configure_logging
-from .ratelimit import TokenBucket
+from .limits import SlotLimiter, SseRegistry
+from .logging_setup import BodyLimitMiddleware, RequestIdMiddleware, SecurityHeadersMiddleware, configure_logging
+from .ratelimit import LoginThrottle, make_attempt_store, make_limiter
 from .routers import auth, projects, results, runs, workspaces
 from .safety import default_resolver
 from .security import TokenVerifier, make_verifier
@@ -46,9 +47,13 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None, 
     app.state.store = store or make_store(st)
     app.state.verifier = verifier or make_verifier(st)
     app.state.resolver = resolver or default_resolver
-    app.state.ip_bucket = TokenBucket(st.rate_limit_per_minute * 3)
-    app.state.user_bucket = TokenBucket(st.rate_limit_per_minute)
-    app.state.auth_bucket = TokenBucket(st.rate_limit_auth_per_minute)
+    app.state.ip_bucket = make_limiter(st.rate_limit_per_minute * 3)
+    app.state.user_bucket = make_limiter(st.rate_limit_per_minute)
+    app.state.auth_bucket = make_limiter(st.rate_limit_auth_per_minute)
+    app.state.login_throttle = LoginThrottle(make_attempt_store(), st.login_fail_threshold, st.login_backoff_base_s,
+                                             st.login_backoff_max_s)
+    app.state.sse = SseRegistry()
+    app.state.estimate_slots = SlotLimiter(st.estimate_slots_per_workspace, st.estimate_slots_global)
     install_handlers(app)
     app.add_middleware(BodyLimitMiddleware, default_limit=1024 * 1024,
                        upload_limit=(st.max_upload_mb + 2) * 1024 * 1024)
@@ -57,9 +62,10 @@ def create_app(settings: Settings | None = None, *, db: Database | None = None, 
                            allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
                            expose_headers=["X-Request-Id"])
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, hsts=st.environment == "production")
 
     @app.get("/healthz", include_in_schema=False, dependencies=[])
-    def healthz():
+    async def healthz():  # async on purpose: must answer even if the worker threadpool is saturated
         return {"status": "ok"}
 
     @app.get("/readyz", include_in_schema=False, dependencies=[])

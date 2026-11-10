@@ -63,7 +63,7 @@ def test_deletion_is_complete(alice, bob, worker, db, store):
 
 def test_audit_trail(alice, bob, client):
     pid = alice.project()
-    alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": bob.email, "role": "viewer"})
+    alice.add_member(bob, "viewer")
     alice.start_run(pid)
     alice.patch(f"/v1/projects/{pid}", json={"name": "n"})
     alice.delete(f"/v1/projects/{pid}")

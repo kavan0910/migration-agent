@@ -26,7 +26,7 @@ def _cases(w):
     return [
         ("GET", f"/v1/workspaces/{wid}", None),
         ("GET", f"/v1/workspaces/{wid}/members", None),
-        ("POST", f"/v1/workspaces/{wid}/members", {"json": {"email": "bob@example.com", "role": "admin"}}),
+        ("POST", f"/v1/workspaces/{wid}/invitations", {"json": {"email": "bob@example.com", "role": "admin"}}),
         ("DELETE", f"/v1/workspaces/{wid}/members/{w['docid']}", None),
         ("GET", f"/v1/workspaces/{wid}/projects", None),
         ("POST", f"/v1/workspaces/{wid}/projects", {"json": {"name": "intruder"}}),
@@ -101,7 +101,7 @@ def test_cannot_create_project_in_foreign_workspace_via_ids(world, bob):
 
 def test_removed_member_loses_access(alice, bob, client):
     pid = alice.project()
-    assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": bob.email, "role": "member"}).status_code == 201
+    alice.add_member(bob, "member")
     assert bob.get(f"/v1/projects/{pid}").status_code == 200
     assert alice.delete(f"/v1/workspaces/{alice.wid}/members/{bob.id}").status_code == 204
     assert bob.get(f"/v1/projects/{pid}").status_code == 404

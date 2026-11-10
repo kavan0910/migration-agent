@@ -3,17 +3,23 @@
 # Optional S3-compatible store:  add  --profile s3
 #
 # Networks
-#   edge     : api + web, published on loopback only. api can reach the internet (git clones; see NOTES).
+#   edge     : api + web, published on loopback only. api can reach the internet directly (it clones git sources for
+#              /estimate and fetches the OIDC JWKS; see NOTES: broad egress is a known residual risk).
 #   backend  : INTERNAL (no default route). postgres, api, worker, egress-proxy.
 #   egress   : routable; ONLY the egress-proxy (and api via edge) can leave. The worker has no route out
-#              except through the allowlisting proxy to MODEL_ENDPOINT_HOST:443.
+#              except through the allowlisting proxy, which permits CONNECT :443 to MODEL_ENDPOINT_HOST and to the
+#              hosts in GIT_ALLOWED_HOSTS ONLY (the WORKER performs git clones for analyze runs, via HTTPS_PROXY).
+#
+# Database roles (row-level security only works for a non-superuser, non-owner role):
+#   POSTGRES_USER (bootstrap superuser, init only) / ma_owner (schema owner, used by `migrate` ONLY) / ma_app
+#   (api + worker). Created by deploy/postgres-init/10-roles.sh on first init of the data volume.
 x-hardening: &hardening
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
 
 x-backend-env: &backend-env
-  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ma_app}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-migration_agent}
+  DATABASE_URL: postgresql+psycopg://ma_app:${MA_APP_PASSWORD:?set MA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-migration_agent}
   AUTH_MODE: ${AUTH_MODE:-dev}
   ENVIRONMENT: ${ENVIRONMENT:-production}
   STORE_BACKEND: ${STORE_BACKEND:-local}
@@ -29,10 +35,13 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-migration_agent}
-      POSTGRES_USER: ${POSTGRES_USER:-ma_app}
+      POSTGRES_USER: ${POSTGRES_USER:-ma_admin}      # bootstrap superuser: init only, never used by the app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      MA_OWNER_PASSWORD: ${MA_OWNER_PASSWORD:?set MA_OWNER_PASSWORD}
+      MA_APP_PASSWORD: ${MA_APP_PASSWORD:?set MA_APP_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -41,6 +50,25 @@ services:
     cap_drop: [ALL]
     cap_add: [CHOWN, SETUID, SETGID, FOWNER, DAC_OVERRIDE]   # needed by the official image entrypoint
     security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+
+  # One-shot schema migration as the schema OWNER role. The long-running api/worker never see these credentials.
+  migrate:
+    image: migration-agent-backend:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+    restart: "no"
+    <<: *hardening
+    user: "10001:10001"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      MIGRATION_DATABASE_URL: postgresql+psycopg://ma_owner:${MA_OWNER_PASSWORD:?set MA_OWNER_PASSWORD}@postgres:5432/${POSTGRES_DB:-migration_agent}
+    depends_on:
+      postgres: { condition: service_healthy }
     networks: [backend]
 
   api:
@@ -55,7 +83,9 @@ services:
     user: "10001:10001"
     pids_limit: 256
     mem_limit: 1g
-    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app_factory --factory --host 0.0.0.0 --port 8000 --proxy-headers"]
+    # uvicorn's own X-Forwarded-* rewriting is off: client-IP handling is the app setting TRUST_PROXY_HEADERS /
+    # TRUSTED_PROXY_COUNT below (default: ignore forwarding headers).
+    command: ["uvicorn", "app.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
     environment:
       <<: *backend-env
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
@@ -63,8 +93,16 @@ services:
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
       OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      SIGNUP_ENABLED: ${SIGNUP_ENABLED:-true}
+      # Closed by default: every self-serve account can spend model budget. Open it deliberately.
+      SIGNUP_ENABLED: ${SIGNUP_ENABLED:-false}
+      DEFAULT_PLAN: ${DEFAULT_PLAN:-free}
+      MAX_WORKSPACES_PER_USER: ${MAX_WORKSPACES_PER_USER:-3}
+      # false = rate-limit on the TCP peer address (right when the API port is reached directly).
+      # true  = behind your own reverse proxy that APPENDS the real client to X-Forwarded-For and is the only way in;
+      #         set TRUSTED_PROXY_COUNT to the number of such proxies (1 for a single nginx/ALB).
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
+      SCRATCH_DIR: /scratch
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
       MAX_EXTRACTED_MB: ${MAX_EXTRACTED_MB:-500}
       GIT_ALLOWED_HOSTS: ${GIT_ALLOWED_HOSTS:-}
@@ -73,10 +111,14 @@ services:
       - objects:/data
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
+      # /estimate extracts uploads in the API process. Size >= ESTIMATE_SLOTS_GLOBAL x (MAX_UPLOAD_MB + MAX_EXTRACTED_MB)
+      # = 3 x (100 + 500) = 1.8 GB with the defaults -> 2g. Lower the limits together with this value.
+      - /scratch:rw,noexec,nosuid,size=${API_SCRATCH_SIZE:-2g},uid=10001,gid=10001
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
       interval: 10s
@@ -98,6 +140,7 @@ services:
       SCRATCH_DIR: /scratch
       ENGINE_WORKERS: ${ENGINE_WORKERS:-2}
       JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+      GIT_ALLOWED_HOSTS: ${GIT_ALLOWED_HOSTS:-}   # also enforced by the egress proxy below
       DEFAULT_MAX_USD: ${DEFAULT_MAX_USD:-5.0}
       HARD_MAX_USD: ${HARD_MAX_USD:-200.0}
       HTTPS_PROXY: http://egress-proxy:3128
@@ -119,6 +162,7 @@ services:
       - /scratch:rw,noexec,nosuid,size=512m,uid=10001,gid=10001
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       egress-proxy: { condition: service_started }
     networks: [backend]          # internal only: no route to the internet except via egress-proxy
 
@@ -133,13 +177,16 @@ services:
     tmpfs: [/var/run, /var/log/squid, /var/spool/squid]
     environment:
       MODEL_ENDPOINT_HOST: ${MODEL_ENDPOINT_HOST:-generativelanguage.googleapis.com}
+      GIT_ALLOWED_HOSTS: ${GIT_ALLOWED_HOSTS:-}
     volumes:
-      - ../docker/squid.conf:/etc/squid/squid.conf.tpl:ro
+      - ./squid.conf:/etc/squid/squid.conf.tpl:ro
     entrypoint:
       - /bin/sh
       - -c
       - >-
         mkdir -p /var/run/squid &&
+        printf '%s' "$${GIT_ALLOWED_HOSTS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//' | grep -v '^$$' > /var/run/squid/git_hosts.txt;
+        touch /var/run/squid/git_hosts.txt &&
         sed "s/__MODEL_ENDPOINT_HOST__/$${MODEL_ENDPOINT_HOST}/" /etc/squid/squid.conf.tpl > /var/run/squid.conf &&
         exec squid -f /var/run/squid.conf -N -C
     networks: [backend, egress]

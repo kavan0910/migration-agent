@@ -10,7 +10,8 @@ target_metadata = Base.metadata
 
 
 def _url() -> str:
-    return normalise_url(os.environ.get("DATABASE_URL") or context.config.get_main_option("sqlalchemy.url")
+    # Migrations run as the schema OWNER role (MIGRATION_DATABASE_URL); the runtime role in DATABASE_URL cannot DDL.
+    return normalise_url(os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL") or context.config.get_main_option("sqlalchemy.url")
                          or "sqlite:///./dev.db")
 
 

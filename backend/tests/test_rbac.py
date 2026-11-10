@@ -9,7 +9,7 @@ def team(client, alice):
     users = {}
     for name, role in (("carol", "admin"), ("dave", "member"), ("erin", "viewer")):
         u = User(client, f"{name}@example.com")
-        assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": u.email, "role": role}).status_code == 201
+        alice.add_member(u, role)
         users[name] = u
     return users
 
@@ -37,7 +37,7 @@ def test_member_can_work_but_not_administer(alice, team, worker):
     assert d.post(f"/v1/workspaces/{alice.wid}/projects", json={"name": "m"}).status_code == 201
     assert d.patch(f"/v1/projects/{pid}", json={"name": "z"}).status_code == 403
     assert d.delete(f"/v1/projects/{pid}").status_code == 403
-    assert d.post(f"/v1/workspaces/{alice.wid}/members", json={"email": "x@example.com", "role": "viewer"}).status_code == 403
+    assert d.post(f"/v1/workspaces/{alice.wid}/invitations", json={"email": "x@example.com", "role": "viewer"}).status_code == 403
     assert d.get(f"/v1/workspaces/{alice.wid}/audit").status_code == 403
 
 
@@ -47,20 +47,21 @@ def test_admin_rules(alice, team, client):
     assert c.get(f"/v1/workspaces/{alice.wid}/audit").status_code == 200
     assert c.patch(f"/v1/projects/{pid}", json={"name": "renamed"}).status_code == 200
     f = User(client, "frank@example.com")
-    assert c.post(f"/v1/workspaces/{alice.wid}/members", json={"email": f.email, "role": "admin"}).status_code == 403
-    assert c.post(f"/v1/workspaces/{alice.wid}/members", json={"email": f.email, "role": "owner"}).status_code == 403
-    assert c.post(f"/v1/workspaces/{alice.wid}/members", json={"email": f.email, "role": "member"}).status_code == 201
-    assert c.post(f"/v1/workspaces/{alice.wid}/members", json={"email": f.email, "role": "member"}).status_code == 409
+    assert c.post(f"/v1/workspaces/{alice.wid}/invitations", json={"email": f.email, "role": "admin"}).status_code == 403
+    assert c.post(f"/v1/workspaces/{alice.wid}/invitations", json={"email": f.email, "role": "owner"}).status_code == 403
+    c.add_member(f, "member", wid=alice.wid)
+    r = f.post("/v1/invitations/accept", json={"token": "x" * 40})
+    assert r.status_code == 404
+    inv = c.post(f"/v1/workspaces/{alice.wid}/invitations", json={"email": f.email, "role": "member"}).json()
+    assert f.post("/v1/invitations/accept", json={"token": inv["token"]}).status_code == 409  # already a member
     assert c.delete(f"/v1/workspaces/{alice.wid}/members/{alice.id}").status_code == 403  # cannot remove an owner
     assert c.delete(f"/v1/workspaces/{alice.wid}/members/{f.id}").status_code == 204
     assert c.delete(f"/v1/projects/{pid}").status_code == 204
 
 
-def test_unknown_user_and_last_owner(alice, team):
-    assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": "ghost@example.com", "role": "member"}).status_code == 404
+def test_last_owner(alice, team):
     assert alice.delete(f"/v1/workspaces/{alice.wid}/members/{alice.id}").status_code == 409
-    assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": "carol@example.com", "role": "owner"}).status_code == 409  # already member
-    assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": "x", "role": "root"}).status_code == 422
+    assert alice.post(f"/v1/workspaces/{alice.wid}/invitations", json={"email": "x", "role": "root"}).status_code == 422
 
 
 def test_member_can_leave(alice, team):
@@ -70,9 +71,8 @@ def test_member_can_leave(alice, team):
 
 
 def test_owner_can_promote_and_second_owner_can_leave(alice, team, client):
-    assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": "newbie@example.com", "role": "viewer"}).status_code == 404
     g = User(client, "gina@example.com")
-    assert alice.post(f"/v1/workspaces/{alice.wid}/members", json={"email": g.email, "role": "owner"}).status_code == 201
+    alice.add_member(g, "owner")
     assert alice.delete(f"/v1/workspaces/{alice.wid}/members/{alice.id}").status_code == 204
 
 

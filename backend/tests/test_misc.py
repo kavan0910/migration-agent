@@ -53,8 +53,11 @@ def test_make_store_and_s3_skeleton(settings):
         def delete_object(self, Bucket, Key): self.objs.pop(Key, None)
         def list_objects_v2(self, Bucket, Prefix, **k):
             return {"Contents": [{"Key": x} for x in self.objs if x.startswith(Prefix)], "IsTruncated": False}
-        def delete_objects(self, Bucket, Delete):
+        def list_object_versions(self, Bucket, Prefix, **k):
+            return {"Versions": [{"Key": x, "VersionId": "v1"} for x in self.objs if x.startswith(Prefix)], "IsTruncated": False}
+        def delete_objects(self, Bucket, Delete, **k):
             for o in Delete["Objects"]: self.objs.pop(o["Key"], None)
+            return {}
 
     s = S3Store("b", client=C())
     s.put("w/p/a", b"1")
@@ -90,7 +93,7 @@ def test_can_start_run_matrix(db):
         from app.models import Workspace
         s.add(Workspace(id=ws, name="x"))
         s.flush()
-        ensure_entitlement(s, ws)
+        ensure_entitlement(s, ws, plan="internal")  # explicit assignment: the default is the restrictive free plan
         plan, lim = effective_limits(s, ws)
         assert plan == "internal" and lim["max_usd_per_run"] > 100
         assert can_start_run(s, ws, {"usd": 1.0}, 5).allowed

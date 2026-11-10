@@ -8,7 +8,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+                        text)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -125,7 +126,13 @@ class UserDoc(Base):
 
 class Run(Base):
     __tablename__ = "runs"
-    __table_args__ = (UniqueConstraint("project_id", "idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "idempotency_key"),
+        # At most one queued/running run per (project, type): the database, not a check-then-insert, enforces it.
+        Index("uq_runs_active_project_type", "project_id", "type", unique=True,
+              sqlite_where=text("status IN ('queued','running')"),
+              postgresql_where=text("status IN ('queued','running')")),
+    )
     id: Mapped[str] = _id()
     workspace_id: Mapped[str] = mapped_column(String(36), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -213,6 +220,36 @@ class AuditLog(Base):
     target: Mapped[str] = mapped_column(String(120), default="")
     at: Mapped[datetime] = _created()
     meta: Mapped[dict] = mapped_column(Json, default=dict)
+
+
+class DeletionTask(Base):
+    """Durable tombstone: object-store prefix that must be removed. Written in the SAME transaction as the row deletion
+    (or by the orphan reconciler) and retried by the worker's reaper until the store confirms removal."""
+    __tablename__ = "deletion_tasks"
+    id: Mapped[str] = _id()
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # no FK: the project row is gone
+    prefix: Mapped[str] = mapped_column(String(300), unique=True)
+    reason: Mapped[str] = mapped_column(String(30), default="project.delete")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_try_at: Mapped[datetime] = mapped_column(TZDateTime, default=now)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _created()
+
+
+class Invitation(Base):
+    """Pending workspace invitation. Only the SHA-256 of the token is stored."""
+    __tablename__ = "invitations"
+    __table_args__ = (Index("ix_invitations_ws", "workspace_id"),)
+    id: Mapped[str] = _id()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    email: Mapped[str] = mapped_column(String(320))
+    role: Mapped[str] = mapped_column(String(20))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invited_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(TZDateTime)
+    accepted_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    created_at: Mapped[datetime] = _created()
 
 
 class Job(Base):

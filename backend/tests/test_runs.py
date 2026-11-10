@@ -39,7 +39,7 @@ def test_lifecycle_success(alice, worker, fake, db, store, settings):
     assert u["totals"]["usd"] == pytest.approx(0.4) and u["totals"]["input_tokens"] == 4000
     assert u["by_run"][0]["run_id"] == r["id"]
     ev = alice.get(f"/v1/workspaces/{alice.wid}/entitlements").json()
-    assert ev["plan"] == "internal" and ev["consumption"]["runs_this_month"] == 1
+    assert ev["plan"] == "free" and ev["consumption"]["runs_this_month"] == 1
     # scratch cleaned
     assert not list(Path(settings.scratch_dir).glob("*"))
 

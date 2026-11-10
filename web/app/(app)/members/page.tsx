@@ -28,11 +28,20 @@ export default function MembersPage() {
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
+  const [issued, setIssued] = useState<string | null>(null);
+  const [joinToken, setJoinToken] = useState("");
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
-    try { await api.workspaces.addMember(wid!, email.trim(), role); setEmail(""); members.reload(); audit.reload(); toast("Member added"); } catch (err) { setError(errorMessage(err)); } finally { setBusy(false); }
+    try { const r = await api.workspaces.invite(wid!, email.trim(), role); setEmail(""); setIssued(r.token); audit.reload(); toast("Invitation created"); } catch (err) { setError(errorMessage(err)); } finally { setBusy(false); }
+  }
+  async function join(e: React.FormEvent) {
+    e.preventDefault();
+    setJoinBusy(true); setJoinError(null);
+    try { await api.workspaces.acceptInvite(joinToken.trim()); toast("Joined workspace"); window.location.reload(); } catch (err) { setJoinError(errorMessage(err)); } finally { setJoinBusy(false); }
   }
   async function remove() {
     if (!removing) return;
@@ -65,16 +74,26 @@ export default function MembersPage() {
 
       {canManage ? (
         <Card className="mb-10 max-w-2xl p-6">
-          <h2 className="display text-3xl">Add a member</h2>
+          <h2 className="display text-3xl">Invite a member</h2>
           <form onSubmit={add} className="mt-4 grid gap-4 sm:grid-cols-[1fr_180px_auto] sm:items-end">
             <Field label="Email" htmlFor="m-email"><Input id="m-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" /></Field>
             <Field label="Role" htmlFor="m-role"><Select id="m-role" value={role} onChange={(e) => setRole(e.target.value as Role)}>{ROLES.map((r) => <option key={r.id} value={r.id}>{r.id}</option>)}</Select></Field>
-            <Button type="submit" variant="primary" loading={busy}>Add</Button>
+            <Button type="submit" variant="primary" loading={busy}>Invite</Button>
           </form>
           <p className="mt-2 text-xs text-muted">{ROLES.find((r) => r.id === role)?.blurb}.</p>
           {error && <div className="mt-3"><Notice tone="danger">{error}</Notice></div>}
+          {issued && <div className="mt-3"><Notice tone="info">Invitation created. Send this one-time code to the invitee, who accepts it under &quot;Join a workspace&quot; while signed in with that email address. It expires and is shown only now: <code className="break-all font-mono text-xs">{issued}</code></Notice></div>}
         </Card>
       ) : <div className="mb-10 max-w-2xl"><Notice tone="info">Only owners and admins can change membership.</Notice></div>}
+
+      <Card className="mb-10 max-w-2xl p-6">
+        <h2 className="display text-3xl">Join a workspace</h2>
+        <form onSubmit={join} className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
+          <Field label="Invitation code" htmlFor="j-token"><Input id="j-token" required value={joinToken} onChange={(e) => setJoinToken(e.target.value)} autoComplete="off" /></Field>
+          <Button type="submit" variant="primary" loading={joinBusy}>Join</Button>
+        </form>
+        {joinError && <div className="mt-3"><Notice tone="danger">{joinError}</Notice></div>}
+      </Card>
 
       {canManage && (
         <section aria-labelledby="audit-h">

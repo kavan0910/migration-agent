@@ -28,6 +28,7 @@ from .logging_setup import configure_logging, run_id_var
 from .models import Comment, Job, Project, Resolution, Run, UsageEvent
 from .profiles import engine_config
 from .safety import UnsafeInput
+from .services import deletion
 from .services.runs import TERMINAL, add_event
 from .storage import ObjectStore, make_store
 
@@ -134,6 +135,8 @@ class Worker:
         self.id = worker_id or f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self.git_clone = git_clone
         self.stop = threading.Event()
+        self._last_reap = 0.0 if self.st.reaper_interval_s <= 0 else time.monotonic()
+        self._last_reconcile = time.monotonic()
 
     # ---------------------------------------------------------------------------------- loop
     def run_forever(self) -> None:
@@ -148,7 +151,20 @@ class Worker:
             if not busy:
                 self.stop.wait(self.st.worker_poll_s)
 
+    def reap_deletions(self, reconcile: bool = False) -> dict:
+        try:
+            return deletion.reap(self.db, self.store, self.st, reconcile=reconcile)
+        except Exception as e:  # never let housekeeping stop job processing
+            log.error("deletion reaper error: %s", type(e).__name__, extra={"event": "reaper_error"})
+            return {}
+
     def run_once(self) -> bool:
+        now = time.monotonic()
+        if now - self._last_reap >= self.st.reaper_interval_s:
+            self.reap_deletions(reconcile=now - self._last_reconcile >= self.st.reconcile_interval_s)
+            if now - self._last_reconcile >= self.st.reconcile_interval_s:
+                self._last_reconcile = now
+            self._last_reap = now
         with self.db.session() as s:
             set_rls_context(s, None, bypass=True)
             jobs.reap_stale(s, self.st.job_lock_timeout_s)
@@ -342,7 +358,7 @@ class Worker:
         with self.db.session() as s:
             set_rls_context(s, None, bypass=True)
             spent = s.get(Run, snap["id"]).cost_usd or 0.0
-            monthly = remaining_monthly_usd(s, snap["wid"])
+            monthly = remaining_monthly_usd(s, snap["wid"], exclude_run_id=snap["id"])  # other runs' reservations are off-limits
         rem = snap["max_usd"] - spent
         if monthly is not None:
             rem = min(rem, monthly)
@@ -383,7 +399,11 @@ class Worker:
                 mat.put_artifact(s, self.store, project, snap["id"], "state", mat.state_key(project), eng.pack_project(pdir))
             s.commit()
             if s.get(Project, snap["pid"]) is None:  # deleted while uploading: do not resurrect data
-                self.store.delete_prefix(f"{snap['wid']}/{snap['pid']}/")
+                t = deletion.enqueue(s, prefix=f"{snap['wid']}/{snap['pid']}/", workspace_id=snap["wid"],
+                                     project_id=snap["pid"], reason="deleted_during_run")
+                s.commit()
+                deletion.attempt(s, self.store, t, self.st)
+                s.commit()
                 raise RunAborted("deleted")
 
     def _apply_review(self, s: Session, eng, project: Project, pdir: Path) -> None:
