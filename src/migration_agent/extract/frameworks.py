@@ -216,6 +216,7 @@ def extract_spring(text: str, rel: str) -> list[Found]:
 _PY_DECO = re.compile(r"^[ \t]*@(\w+)\.(route|api_route|get|post|put|patch|delete|options|head|websocket)\s*\(", re.M)
 _PY_FACTORY = re.compile(r"^[ \t]*(\w+)\s*(?::[^=\n]+)?=\s*(?:\w+\.)*(Blueprint|APIRouter|FastAPI|Flask)\s*\(", re.M)
 _PY_MOUNT = re.compile(r"\b(\w+)\.(register_blueprint|include_router)\s*\(")
+_PY_RESTFUL = re.compile(r"\b\w+\.add_(?:org_)?resource\s*\(")  # Flask-RESTful: api.add_resource(Cls, "/a", "/b")
 
 
 def extract_python_web(text: str, rel: str) -> list[Found]:
@@ -282,6 +283,19 @@ def extract_python_web(text: str, rel: str) -> list[Found]:
         ln = lines.of(m.start() + (len(m.group(0)) - len(m.group(0).lstrip())))
         for mth in methods:
             out.append(_route(rel, ln, mth, join_path(full(var), path)))
+    for m in _PY_RESTFUL.finditer(text):
+        e = balanced(text, m.end() - 1)
+        if e < 0:
+            continue
+        parts = split_top(text[m.end():e - 1])
+        if len(parts) < 2 or not re.fullmatch(r"\s*[\w.]+\s*", parts[0]):
+            continue
+        for part in parts[1:]:
+            if re.match(r"\s*\w+\s*=", part):
+                continue  # endpoint=..., resource_class_kwargs=...
+            for u in _strs(part)[:1]:
+                out.append(_route(rel, lines.of(m.start()), "ANY", join_path(u)))
+    out.sort(key=lambda f: f.line)
     return out
 
 

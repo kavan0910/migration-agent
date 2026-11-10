@@ -76,3 +76,8 @@ def test_django_urlconf_and_drf_router():
 def test_django_ignores_docstring_and_comment_examples():
     src = '"""Examples:\n    url(r\'^$\', views.home, name=\'home\')\n"""\nurlpatterns = [\n    # url(r\'^old/\', v)\n    url(r\'^real/$\', v),\n]\n'
     assert [f.name for f in extract_routes("proj/urls.py", src)] == ["ANY /real"]
+
+
+def test_flask_restful_add_resource():
+    assert names("flask_restful/api.py") == [
+        "ANY /api/alerts/<alert_id>", "ANY /api/alerts", "ANY /api/alerts/all"]
