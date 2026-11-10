@@ -31,7 +31,7 @@ llm = ["litellm>=1.40"]
 migration-agent = "migration_agent.cli:main"
 
 [project.urls]
-Documentation = "https://github.com/OWNER/migration-agent/tree/main/docs"  # TODO: set real repo URL
+Documentation = "https://github.com/kavan0910/migration-agent/tree/main/docs"
 
 [build-system]
 requires = ["hatchling"]

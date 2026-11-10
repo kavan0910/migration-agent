@@ -73,7 +73,7 @@ def format_sha256sums(entries: dict[str, str]) -> str:
 
 def cosign_commands(names: list[str], dist: str = "dist") -> list[str]:
     cmds = [f"cosign sign-blob --yes --bundle {dist}/{n}.sigstore.json {dist}/{n}" for n in sorted(names)]
-    cmds.append("# image: cosign sign --yes ghcr.io/OWNER/migration-agent@sha256:<digest>   (keyless, needs OIDC)")
+    cmds.append("# image: cosign sign --yes ghcr.io/kavan0910/migration-agent@sha256:<digest>   (keyless, needs OIDC)")
     return cmds
 
 

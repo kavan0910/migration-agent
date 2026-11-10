@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir build \
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE} AS runtime
+ARG PYTHON_IMAGE
 ARG VERSION=0.0.0-dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
@@ -39,7 +40,7 @@ LABEL org.opencontainers.image.title="migration-agent" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.source="https://github.com/OWNER/migration-agent" \
+      org.opencontainers.image.source="https://github.com/kavan0910/migration-agent" \
       org.opencontainers.image.licenses="UNLICENSED" \
       org.opencontainers.image.base.name="${PYTHON_IMAGE}"
 

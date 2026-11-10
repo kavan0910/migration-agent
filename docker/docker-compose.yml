@@ -1,7 +1,7 @@
 # Build context is the repo root:  docker compose -f docker/docker-compose.yml ...
 #
 # Image: build locally (default) or use a released, signed image:
-#   MA_IMAGE=ghcr.io/OWNER/migration-agent:0.2.0 docker compose -f docker/docker-compose.yml --profile offline run --rm worker-offline analyze /project --offline
+#   MA_IMAGE=ghcr.io/kavan0910/migration-agent:0.2.0 docker compose -f docker/docker-compose.yml --profile offline run --rm worker-offline analyze /project --offline
 # Required: REPO_DIR (source, mounted read-only) and PROJECT_DIR (project folder, read-write).
 # Configuration: MA_* variables are passed through by name (docs/deployment.md); secrets likewise.
 #
